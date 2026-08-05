@@ -1,50 +1,23 @@
 {
-  "name": "fps-engine",
+  "name": "overwatch-cod",
+  "private": true,
   "version": "0.1.0",
-  "description": "AI-native FPS game engine built on Three.js",
-  "main": "dist/index.js",
-  "types": "dist/index.d.ts",
+  "type": "module",
+  "description": "OVERWATCH — a browser FPS engineered to stand next to a modern Call of Duty. Three.js r180, WebGL2, zero art assets; every texture, mesh and sound generated procedurally at load time.",
   "scripts": {
-    "build": "tsc",
-    "build:watch": "tsc --watch",
-    "test": "jest --config jest.config.js",
-    "test:watch": "jest --config jest.config.js --watch",
-    "test:coverage": "jest --config jest.config.js --coverage",
-    "lint": "eslint src/**/*.ts",
-    "lint:fix": "eslint src/**/*.ts --fix",
-    "format": "prettier --write 'src/**/*.ts'",
-    "docs": "typedoc --out docs/api src",
-    "demo:build": "webpack --mode production",
-    "demo:dev": "webpack serve --mode development",
-    "benchmark": "ts-node tests/benchmarks/runner.ts",
-    "start": "ts-node src/index.ts",
-    "deploy:gh-pages": "npm run demo:build && npx gh-pages -d dist-demo -m 'Deploy $(date +%Y-%m-%d)'",
-    "deploy:netlify": "npm run demo:build && npx netlify deploy --prod --dir=dist-demo",
-    "deploy:netlify:draft": "npm run demo:build && npx netlify deploy --dir=dist-demo",
-    "serve:demo": "node serve-demo.mjs"
+    "dev": "vite",
+    "build": "vite build",
+    "preview": "vite preview",
+    "capture": "node tools/capture.mjs",
+    "shotset": "node tools/shotset.mjs",
+    "baseline": "node tools/shotset.mjs --baseline",
+    "imagediff": "node tools/imagediff.mjs",
+    "gate": "npm run baseline && npm run shotset && npm run imagediff"
   },
   "dependencies": {
-    "@types/three": "^0.162.0",
-    "three": "^0.162.0"
+    "three": "0.180.0"
   },
   "devDependencies": {
-    "@types/jest": "^29.5.11",
-    "@typescript-eslint/eslint-plugin": "^6.19.0",
-    "@typescript-eslint/parser": "^6.19.0",
-    "@webgpu/types": "^0.1.71",
-    "eslint": "^8.56.0",
-    "gh-pages": "^6.1.1",
-    "html-webpack-plugin": "^5.6.0",
-    "jest": "^29.7.0",
-    "netlify-cli": "^17.23.5",
-    "prettier": "^3.2.4",
-    "ts-jest": "^29.1.1",
-    "ts-loader": "^9.5.1",
-    "ts-node": "^10.9.2",
-    "typedoc": "^0.25.7",
-    "typescript": "^5.3.3",
-    "webpack": "^5.90.0",
-    "webpack-cli": "^5.1.4",
-    "webpack-dev-server": "^5.2.6"
+    "vite": "^6.3.5"
   }
-}
+}

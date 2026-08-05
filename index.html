@@ -1,0 +1,36 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1, maximum-scale=1, user-scalable=no" />
+  <title>OVERWATCH</title>
+  <style>
+    html, body { margin: 0; padding: 0; width: 100%; height: 100%; overflow: hidden; background: #000; }
+    #game { position: fixed; inset: 0; width: 100%; height: 100%; display: block; }
+    #boot {
+      position: fixed; inset: 0; z-index: 10; display: flex; flex-direction: column;
+      align-items: center; justify-content: center; gap: 14px;
+      background: radial-gradient(1200px 800px at 50% 38%, #131a26 0%, #05070c 100%);
+      color: #d7dce6; font-family: 'Segoe UI', system-ui, sans-serif;
+      transition: opacity .6s ease; cursor: pointer;
+    }
+    #boot h1 { font-size: 44px; letter-spacing: 16px; margin: 0; font-weight: 700; color: #eef1f6;
+      text-shadow: 0 0 28px rgba(110, 160, 255, .28); }
+    #boot .sub { color: #8b94a6; letter-spacing: 4px; margin: 0; font-size: 12px; text-transform: uppercase; }
+    #boot .bar { width: 260px; height: 3px; background: #1c2230; border-radius: 2px; overflow: hidden; }
+    #boot .bar i { display: block; height: 100%; width: 0%; background: linear-gradient(90deg, #4a7dff, #7bd0ff); transition: width .25s ease; }
+    #boot.err h1 { color: #ff6b6b; }
+    #boot .hint { color: #5b6474; font-size: 12px; letter-spacing: 1px; }
+  </style>
+</head>
+<body>
+  <canvas id="game"></canvas>
+  <div id="boot">
+    <h1>OVERWATCH</h1>
+    <p class="sub">Sector readiness in progress</p>
+    <div class="bar"><i id="bootbar"></i></div>
+    <p class="hint">click to engage</p>
+  </div>
+  <script type="module" src="/src/main.js"></script>
+</body>
+</html>
