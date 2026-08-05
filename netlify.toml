@@ -1,0 +1,41 @@
+# Netlify Deployment Configuration for STRIDE OPS Demo
+#
+# To deploy via Netlify:
+#   1. Push this repo to GitHub/GitLab
+#   2. Go to https://app.netlify.com > Add new site > Import from Git
+#   3. Select this repo
+#   4. Netlify will auto-detect this config
+#
+# Or deploy manually:
+#   npm run demo:build
+#   npx netlify deploy --prod --dir=dist-demo
+
+[build]
+  command = "npm ci && npm run demo:build"
+  publish = "dist-demo"
+
+# ── SPA redirect: all routes serve index.html ──
+# Lets ?mode=classic, ?mode=ai, etc. work without a server
+[[redirects]]
+  from = "/*"
+  to = "/index.html"
+  status = 200
+
+# ── Caching headers for the large JS bundle ──
+[[headers]]
+  for = "/*.js"
+  [headers.values]
+    Cache-Control = "public, max-age=31536000, immutable"
+
+[[headers]]
+  for = "/*.map"
+  [headers.values]
+    Cache-Control = "public, max-age=31536000, immutable"
+
+# ── Security headers ──
+[[headers]]
+  for = "/*"
+  [headers.values]
+    X-Frame-Options = "DENY"
+    X-Content-Type-Options = "nosniff"
+    Referrer-Policy = "strict-origin-when-cross-origin"
