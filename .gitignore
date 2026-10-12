@@ -1,0 +1,11 @@
+node_modules/
+coverage/
+
+# build output (rebuilt by `npm run build` / `npm run demo:build`)
+dist/
+dist-demo/
+stride-ops/docs/api/
+
+# screenshot runs: keep the committed baselines, ignore fresh captures
+overwatch/shots/*.png
+overwatch/.chrome-tmp-*/
