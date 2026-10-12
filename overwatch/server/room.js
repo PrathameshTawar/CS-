@@ -1,5 +1,6 @@
 // server/room.js — one authoritative match: players, inputs, simulation,
-// snapshots. No sockets here (index.js owns those), so it is unit-testable.
+// combat, snapshots. No sockets here (index.js owns those), so it is
+// unit-testable.
 //
 // Simulation model:
 // - Every player is stepped with shared/movement.js at TICK_RATE, the same
@@ -10,22 +11,68 @@
 // - Each tick grants every player one step of credit (capped). Inputs beyond
 //   the credit wait in a bounded queue, so a client can never move faster
 //   than real time (no speed hacks), only catch up after jitter.
+//
+// Combat model:
+// - Shots and reloads are tagged with the input seq they happen before and
+//   resolved right before that input is applied: the server checks them
+//   against exactly the state the client fired from.
+// - Fire rate, ammo and reloads are timed in the shooter's own input steps
+//   (1/120 s each), the same clock the client's weapon runs on.
+// - Lag compensation: every tick records each player's hitbox; a shot rewinds
+//   the other players to the tick the shooter was looking at (at most
+//   MAX_REWIND_TICKS back) and traces shared/combat.js against them.
 
 import { CollisionWorld } from '../shared/collision.js';
 import { createMoveState, stepMove } from '../shared/movement.js';
 import {
-  MAX_PLAYERS_PER_ROOM,
+  BODY_DAMAGE,
+  FIRE_INTERVAL,
+  HEAD_DAMAGE,
+  MAG_SIZE,
+  MAX_HEALTH,
+  RELOAD_REFILL_AT,
+  RELOAD_TIME,
+  RESERVE,
+  RESPAWN_TIME,
+  isHeadshot,
+  playerHitbox,
+  shotEndpoint,
+  traceShot,
+} from '../shared/combat.js';
+import {
+  EV_HIT,
+  EV_KILL,
+  EV_SHOT,
+  EV_SPAWN,
   MAX_INPUTS_PER_MESSAGE,
+  MAX_PLAYERS_PER_ROOM,
+  MAX_REWIND_TICKS,
+  MAX_SHOTS_PER_MESSAGE,
   PL_CROUCH,
+  PL_DEAD,
   PL_GROUNDED,
   TICK_RATE,
   packState,
   readInput,
+  readShot,
 } from '../shared/protocol.js';
 
 const H = 1 / TICK_RATE;
 const MAX_CREDIT = TICK_RATE / 4; // 250 ms of catch-up after a stall
 const MAX_QUEUE = TICK_RATE / 2; // inputs waiting beyond credit; older ones are dropped
+const MAX_PENDING_ACTIONS = 16; // shots/reloads waiting for their input seq
+const HISTORY = 64; // ticks of hitbox history kept per player (> MAX_REWIND_TICKS)
+
+// combat timing in input steps
+const FIRE_STEPS = Math.round(FIRE_INTERVAL * TICK_RATE) - 1; // 1 step of frame-timing slack
+// the client times its reload in frames, the server in steps: end the
+// server's reload 50 ms early so a legit first shot after it isn't refused
+const RELOAD_STEPS = Math.round(RELOAD_TIME * TICK_RATE) - 6;
+const REFILL_STEPS = Math.round(RELOAD_REFILL_AT * TICK_RATE);
+const RESPAWN_TICKS = RESPAWN_TIME * TICK_RATE;
+// how far the reported muzzle may be from the server's eye position: the
+// weapon offset (~0.26 m) plus lean, bob and recoil, with margin
+const MAX_MUZZLE_OFFSET = 0.75;
 
 // Spawn points on open ground around the plaza; tests check each one lands on
 // the street level. Players spawn high and the mover drops them onto the
@@ -45,9 +92,13 @@ export class Room {
     this.world = new CollisionWorld(colliders);
     this.players = new Map();
     this.tick = 0;
+    this.events = []; // { n, tick, data }
+    this._eventN = 0;
     this._nextId = 1;
     this._nextSpawn = 0;
     this._out = { hasWish: false, landed: false, impact: 0 };
+    this._end = { x: 0, y: 0, z: 0 };
+    this._boxes = []; // rewound hitboxes for the shot being resolved (reused)
   }
 
   get size() {
@@ -57,21 +108,39 @@ export class Room {
   // Adds a player; returns it, or null when the room is full.
   join(name) {
     if (this.players.size >= this.maxPlayers) return null;
-    const [x, z] = SPAWNS[this._nextSpawn++ % SPAWNS.length];
+    const history = [];
+    for (let i = 0; i < HISTORY; i++) history.push({ tick: -1, x: 0, y: 0, z: 0, halfY: 0, alive: false });
     const player = {
       id: this._nextId++,
       name,
-      move: createMoveState({ x, y: SPAWN_HEIGHT, z }, { x: 0, y: 0, z: 0 }),
+      move: null,
       pitch: 0,
       queue: [],
       credit: 0,
       lastSeq: -1,
       dropped: 0,
+      steps: 0, // inputs applied: the player's own combat clock
+      actions: [], // pending { seq, shot | reload }
+      hp: MAX_HEALTH,
+      dead: false,
+      respawnTick: 0,
+      spawns: 0,
+      ammo: MAG_SIZE,
+      reserve: RESERVE,
+      reloadStart: -1,
+      lastFire: -Infinity,
+      kills: 0,
+      deaths: 0,
+      rejected: 0, // shots refused (rate, ammo, origin): a cheat signal
+      eventsSeen: this._eventN,
+      history,
+      hitbox: { min: [0, 0, 0], max: [0, 0, 0], surface: 'flesh', owner: null },
     };
-    // settle onto the ground with one idle step (not a client input), so the
-    // first snapshot already shows the player standing at the spawn
-    stepMove(player.move, IDLE, H, this.world, this._out);
+    player.hitbox.owner = player;
+    const [x, z] = SPAWNS[this._nextSpawn++ % SPAWNS.length];
+    this._place(player, x, z);
     this.players.set(player.id, player);
+    this._record(player);
     return player;
   }
 
@@ -79,9 +148,10 @@ export class Room {
     return this.players.delete(id);
   }
 
-  // Queues a batch of wire inputs. Returns false if the batch is malformed
-  // (the caller should drop the client). Old or duplicate seqs are ignored.
-  receiveInputs(id, batch) {
+  // Queues a batch of wire inputs plus optional shots/reloads. Returns false
+  // if anything is malformed (the caller should drop the client). Old or
+  // duplicate seqs are ignored.
+  receiveInputs(id, batch, shots = undefined, reloads = undefined) {
     const p = this.players.get(id);
     if (!p) return false;
     if (!Array.isArray(batch) || batch.length > MAX_INPUTS_PER_MESSAGE) return false;
@@ -98,6 +168,22 @@ export class Room {
       p.dropped += p.queue.length - MAX_QUEUE;
       p.queue.splice(0, p.queue.length - MAX_QUEUE);
     }
+    if (shots !== undefined) {
+      if (!Array.isArray(shots) || shots.length > MAX_SHOTS_PER_MESSAGE) return false;
+      for (const raw of shots) {
+        const shot = readShot(raw);
+        if (!shot) return false;
+        p.actions.push({ seq: shot.seq, shot });
+      }
+    }
+    if (reloads !== undefined) {
+      if (!Array.isArray(reloads) || reloads.length > MAX_SHOTS_PER_MESSAGE) return false;
+      for (const seq of reloads) {
+        if (!Number.isInteger(seq) || seq < 0) return false;
+        p.actions.push({ seq, reload: true });
+      }
+    }
+    if (p.actions.length > MAX_PENDING_ACTIONS) p.actions.splice(0, p.actions.length - MAX_PENDING_ACTIONS);
     return true;
   }
 
@@ -109,15 +195,179 @@ export class Room {
       while (p.credit >= 1 && p.queue.length) {
         const input = p.queue.shift();
         p.credit -= 1;
-        p.move.yaw = input.yaw;
-        p.pitch = input.pitch;
-        stepMove(p.move, input, H, this.world, this._out);
+        this._runActions(p, input.seq);
         p.lastSeq = input.seq;
+        p.pitch = input.pitch;
+        if (p.dead) continue; // inputs are consumed (acked) but nobody moves
+        p.move.yaw = input.yaw;
+        stepMove(p.move, input, H, this.world, this._out);
+        p.steps++;
+        if (p.reloadStart >= 0) {
+          const t = p.steps - p.reloadStart;
+          if (t === REFILL_STEPS) {
+            const take = Math.min(MAG_SIZE - p.ammo, p.reserve);
+            p.ammo += take;
+            p.reserve -= take;
+          }
+          if (t >= RELOAD_STEPS) p.reloadStart = -1;
+        }
       }
+      if (p.dead && this.tick >= p.respawnTick) this._respawn(p);
+    }
+    for (const p of this.players.values()) this._record(p);
+    this._trimEvents();
+  }
+
+  // Shots/reloads due before input `seq` is applied.
+  _runActions(p, seq) {
+    if (!p.actions.length) return;
+    let keep = 0;
+    for (let i = 0; i < p.actions.length; i++) {
+      const a = p.actions[i];
+      if (a.seq > seq) {
+        p.actions[keep++] = a;
+        continue;
+      }
+      if (a.shot) this._fire(p, a.shot);
+      else this._reload(p);
+    }
+    p.actions.length = keep;
+  }
+
+  _reload(p) {
+    if (p.dead || p.reloadStart >= 0 || p.ammo >= MAG_SIZE || p.reserve <= 0) return;
+    p.reloadStart = p.steps;
+  }
+
+  _fire(p, shot) {
+    if (p.dead) return;
+    const m = p.move;
+    const reloading = p.reloadStart >= 0;
+    const eyeDist = Math.hypot(shot.origin.x - m.pos.x, shot.origin.y - (m.pos.y + m.eye), shot.origin.z - m.pos.z);
+    if (reloading || p.ammo <= 0 || p.steps - p.lastFire < FIRE_STEPS || eyeDist > MAX_MUZZLE_OFFSET) {
+      p.rejected++;
+      return;
+    }
+    p.ammo--;
+    p.lastFire = p.steps;
+
+    // lag compensation: everyone else as the shooter saw them. The newest
+    // recorded tick is the previous one (this tick is still being simulated).
+    const newest = this.tick - 1;
+    const viewTick = Math.max(newest - MAX_REWIND_TICKS, Math.min(newest, shot.viewTick));
+    const boxes = this._boxes;
+    boxes.length = 0;
+    for (const other of this.players.values()) {
+      if (other === p || other.dead) continue;
+      if (this._rewind(other, viewTick)) boxes.push(other.hitbox);
+    }
+    this.world.dynamics = boxes;
+    const hit = traceShot(this.world, shot.origin, shot.dir);
+    this.world.dynamics = [];
+
+    const o = shot.origin;
+    const end = hit ? hit.point : shotEndpoint(o, shot.dir, 200, this._end);
+    this._emit([EV_SHOT, p.id, r3(o.x), r3(o.y), r3(o.z), r3(end.x), r3(end.y), r3(end.z)]);
+    if (!hit || !hit.box || !hit.box.owner) return;
+
+    const target = hit.box.owner;
+    const headshot = isHeadshot(hit.box, hit.point.y);
+    const damage = headshot ? HEAD_DAMAGE : BODY_DAMAGE;
+    target.hp = Math.max(0, target.hp - damage);
+    this._emit([EV_HIT, p.id, target.id, damage, headshot ? 1 : 0, r3(hit.point.x), r3(hit.point.y), r3(hit.point.z)]);
+    if (target.hp === 0) {
+      target.dead = true;
+      target.respawnTick = this.tick + RESPAWN_TICKS;
+      target.deaths++;
+      p.kills++;
+      this._emit([EV_KILL, p.id, target.id, headshot ? 1 : 0]);
     }
   }
 
-  // Snapshot for one recipient: their exact state plus everyone else.
+  // Positions `p.hitbox` where p was at `tick` (interpolated). False if p was
+  // dead then.
+  _rewind(p, tick) {
+    const t0 = Math.floor(tick);
+    const a = p.history[t0 % HISTORY];
+    const b = p.history[(t0 + 1) % HISTORY];
+    if (a.tick !== t0) {
+      // no record for that tick (joined since): use where they are now
+      const m = p.move;
+      playerHitbox(m.pos.x, m.pos.y, m.pos.z, m.half.y, p.hitbox);
+      return true;
+    }
+    if (!a.alive) return false;
+    const f = b.tick === t0 + 1 && b.alive ? tick - t0 : 0;
+    playerHitbox(
+      a.x + (b.x - a.x) * f,
+      a.y + (b.y - a.y) * f,
+      a.z + (b.z - a.z) * f,
+      a.halfY + (b.halfY - a.halfY) * f,
+      p.hitbox,
+    );
+    return true;
+  }
+
+  _record(p) {
+    const h = p.history[this.tick % HISTORY];
+    const m = p.move;
+    h.tick = this.tick;
+    h.x = m.pos.x;
+    h.y = m.pos.y;
+    h.z = m.pos.z;
+    h.halfY = m.half.y;
+    h.alive = !p.dead;
+  }
+
+  _respawn(p) {
+    // the spawn farthest from every living opponent
+    let best = SPAWNS[0];
+    let bestD = -1;
+    for (const s of SPAWNS) {
+      let d = Infinity;
+      for (const o of this.players.values()) {
+        if (o === p || o.dead) continue;
+        d = Math.min(d, Math.hypot(o.move.pos.x - s[0], o.move.pos.z - s[1]));
+      }
+      if (d > bestD) {
+        bestD = d;
+        best = s;
+      }
+    }
+    this._place(p, best[0], best[1]);
+    p.hp = MAX_HEALTH;
+    p.dead = false;
+    p.ammo = MAG_SIZE;
+    p.reserve = RESERVE;
+    p.reloadStart = -1;
+    p.lastFire = -Infinity;
+    p.spawns++;
+    this._emit([EV_SPAWN, p.id]);
+  }
+
+  // Fresh movement state at a spawn, settled onto the ground with one idle
+  // step (not a client input) so snapshots show the player standing.
+  _place(p, x, z) {
+    const yaw = p.move ? p.move.yaw : Math.PI;
+    p.move = createMoveState({ x, y: SPAWN_HEIGHT, z }, { x: 0, y: 0, z: 0 });
+    p.move.yaw = yaw;
+    stepMove(p.move, IDLE, H, this.world, this._out);
+  }
+
+  _emit(data) {
+    this.events.push({ n: ++this._eventN, tick: this.tick, data });
+  }
+
+  _trimEvents() {
+    // events older than a second have been delivered to every live client
+    let drop = 0;
+    while (drop < this.events.length && this.events[drop].tick < this.tick - TICK_RATE) drop++;
+    if (drop) this.events.splice(0, drop);
+  }
+
+  // Snapshot for one recipient: their exact state, their combat status,
+  // everyone else, and the events they haven't seen. Advances the
+  // recipient's event cursor.
   snapshotFor(id) {
     const me = this.players.get(id);
     if (!me) return null;
@@ -127,15 +377,32 @@ export class Room {
       const m = p.move;
       players.push([
         p.id,
-        round(m.pos.x), round(m.pos.y), round(m.pos.z),
-        round(m.yaw), round(p.pitch),
-        (m.crouching ? PL_CROUCH : 0) | (m.grounded ? PL_GROUNDED : 0),
+        r3(m.pos.x), r3(m.pos.y), r3(m.pos.z),
+        r3(m.yaw), r3(p.pitch),
+        (m.crouching ? PL_CROUCH : 0) | (m.grounded ? PL_GROUNDED : 0) | (p.dead ? PL_DEAD : 0),
         p.name,
+        p.kills,
+        p.deaths,
       ]);
     }
-    return { t: 'snap', tick: this.tick, ack: me.lastSeq, you: packState(me.move), players };
+    const ev = [];
+    for (const e of this.events) {
+      if (e.n <= me.eventsSeen) continue;
+      if (e.data[0] === EV_SHOT && e.data[1] === id) continue; // drew it locally
+      ev.push(e.data);
+    }
+    me.eventsSeen = this._eventN;
+    return {
+      t: 'snap',
+      tick: this.tick,
+      ack: me.lastSeq,
+      you: packState(me.move),
+      me: [me.hp, me.dead ? 1 : 0, me.ammo, me.reserve, me.kills, me.deaths, me.spawns],
+      players,
+      ev,
+    };
   }
 }
 
 // Others are only drawn, so millimetres are plenty.
-const round = (v) => Math.round(v * 1000) / 1000;
+const r3 = (v) => Math.round(v * 1000) / 1000;

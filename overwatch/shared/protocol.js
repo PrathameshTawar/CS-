@@ -7,25 +7,38 @@
 //
 //   client -> server
 //     { t: 'hello', v, name, room }             first message, once
-//     { t: 'input', i: [[seq, f, r, flags, yaw, pitch], ...] }
+//     { t: 'input', i: [[seq, f, r, flags, yaw, pitch], ...],
+//       f?: [[seq, ox, oy, oz, dx, dy, dz, viewTick], ...],   shots
+//       r?: [seq, ...] }                                      reload starts
 //     { t: 'ping', c }                          c: client clock (ms)
 //   server -> client
 //     { t: 'welcome', id, seed, room, tick }
-//     { t: 'snap', tick, ack, you, players }    ack: last input seq applied
+//     { t: 'snap', tick, ack, you, me, players, ev }
 //     { t: 'pong', c }
 //     { t: 'error', code, message }             then the socket closes
 //
-// `you` is the recipient's full movement state (see packState) so the client
-// can rewind to it and replay unacknowledged inputs. `players` holds every
-// OTHER player as [id, x, y, z, yaw, pitch, flags, name].
+// Shots and reloads carry the seq of the input step they happen BEFORE, so
+// the server resolves them against exactly the state the client fired from.
+// `viewTick` is the server tick the shooter was looking at (remote players
+// are drawn in the past); the server rewinds targets to it (lag
+// compensation), at most MAX_REWIND_TICKS back.
+//
+// Snapshot: `ack` is the last input seq applied. `you` is the recipient's full
+// movement state (see packState) so the client can rewind to it and replay
+// unacknowledged inputs; `me` is [hp, dead, ammo, reserve, kills, deaths,
+// spawns]. `players` holds every OTHER player as
+// [id, x, y, z, yaw, pitch, flags, name, kills, deaths]. `ev` lists combat
+// events since the recipient's last snapshot (EV_* below).
 
-export const PROTOCOL_VERSION = 1;
+export const PROTOCOL_VERSION = 2;
 export const TICK_RATE = 120; // server steps per second; equals the client's FIXED_STEP
 export const SNAPSHOT_EVERY = 6; // ticks between snapshots (20 Hz)
 export const INPUT_SEND_EVERY = 4; // client fixed steps per input batch (30 Hz)
 export const MAX_PLAYERS_PER_ROOM = 10;
 export const MAX_INPUTS_PER_MESSAGE = 32;
-export const MAX_MESSAGE_BYTES = 4096;
+export const MAX_MESSAGE_BYTES = 8192;
+export const MAX_SHOTS_PER_MESSAGE = 8;
+export const MAX_REWIND_TICKS = 48; // 400 ms: RTT/2 + the 100 ms interpolation delay
 
 // input flags
 export const IN_JUMP = 1;
@@ -36,6 +49,13 @@ export const IN_ADS = 8;
 // player flags in snapshots
 export const PL_CROUCH = 1;
 export const PL_GROUNDED = 2;
+export const PL_DEAD = 4;
+
+// combat events in snapshots
+export const EV_SHOT = 1; // [EV_SHOT, shooterId, ox, oy, oz, ex, ey, ez]
+export const EV_HIT = 2; // [EV_HIT, shooterId, targetId, damage, headshot, x, y, z]
+export const EV_KILL = 3; // [EV_KILL, killerId, victimId, headshot]
+export const EV_SPAWN = 4; // [EV_SPAWN, playerId]
 
 export function encode(msg) {
   return JSON.stringify(msg);
@@ -78,6 +98,25 @@ export function readInput(raw) {
     yaw,
     pitch: Math.max(-1.5, Math.min(1.5, pitch)),
   };
+}
+
+const isCoord = (v) => typeof v === 'number' && Number.isFinite(v) && Math.abs(v) < 1e4;
+
+// Validates one wire shot; returns { seq, origin, dir, viewTick } or null.
+// Range checks against the shooter's real state happen on the server.
+export function readShot(raw) {
+  if (!Array.isArray(raw) || raw.length !== 8) return null;
+  const [seq, ox, oy, oz, dx, dy, dz, viewTick] = raw;
+  if (!Number.isInteger(seq) || seq < 0) return null;
+  if (![ox, oy, oz, dx, dy, dz].every(isCoord)) return null;
+  if (typeof viewTick !== 'number' || !Number.isFinite(viewTick) || viewTick < 0) return null;
+  const len = Math.hypot(dx, dy, dz);
+  if (len < 0.9 || len > 1.1) return null;
+  return { seq, origin: { x: ox, y: oy, z: oz }, dir: { x: dx / len, y: dy / len, z: dz / len }, viewTick };
+}
+
+export function writeShot(seq, origin, dir, viewTick) {
+  return [seq, origin.x, origin.y, origin.z, dir.x, dir.y, dir.z, Math.round(viewTick * 100) / 100];
 }
 
 export function writeInput(seq, input, yaw, pitch) {

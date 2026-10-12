@@ -86,7 +86,7 @@ export async function startServer({ port = 8787, host = '0.0.0.0', seed = 0x5eed
       }
 
       if (msg.t === 'input') {
-        if (!client.room.receiveInputs(client.player.id, msg.i)) reject(ws, 'bad-input', 'malformed input');
+        if (!client.room.receiveInputs(client.player.id, msg.i, msg.f, msg.r)) reject(ws, 'bad-input', 'malformed input');
       } else if (msg.t === 'ping') {
         send(ws, { t: 'pong', c: msg.c });
       }

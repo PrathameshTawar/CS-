@@ -123,13 +123,16 @@ Emit and listen via `ctx.events`. Payloads are plain objects. The canonical set:
 | `damage:dealt` | `{ target, amount, headshot, killed, point }` | ai / physics |
 | `damage:taken` | `{ amount, from, health }` | player |
 | `actor:death` | `{ actor, point, impulse }` | ai |
+| `player:kill` | `{ killer, victim, headshot, byMe, onMe }` (names) | net |
 
 `damage:dealt` semantics: `target` is who the damage lands ON. When an enemy
 round connects, `target` is `'player'`; the player system applies it and emits
 `damage:taken`. When a player round hits a soldier, `target` is the soldier
 object — filter `target !== 'player'` before drawing a hitmarker. `killed` is
 true when the damage drops the target to 0; the emitter also fires
-`actor:death` in that case.
+`actor:death` in that case. Online, `net` emits `damage:dealt` with
+`target: { remoteId }` only when the server confirms a hit, `damage:taken`
+when the server lowers our health, and `player:kill` for the kill feed.
 | `player:land` | `{ velocity, surface }` | player |
 | `player:footstep` | `{ position, surface, running }` | player |
 | `player:state` | `{ stance, sprinting, sliding, ads }` | player |

@@ -5,7 +5,8 @@ import { test, before, after } from 'node:test';
 import assert from 'node:assert/strict';
 import WebSocket from 'ws';
 import { startServer } from '../server/index.js';
-import { PROTOCOL_VERSION, TICK_RATE, writeInput } from '../shared/protocol.js';
+import { BODY_DAMAGE, MAG_SIZE } from '../shared/combat.js';
+import { EV_HIT, EV_KILL, PROTOCOL_VERSION, TICK_RATE, writeInput, writeShot } from '../shared/protocol.js';
 
 let server;
 let url;
@@ -71,6 +72,38 @@ test('two clients join one room and see each other move', async () => {
 
   a.ws.close();
   await b.next((m) => m.t === 'snap' && m.tick > moved.tick && !m.players.some((p) => p[0] === wa.id));
+  b.ws.close();
+});
+
+test('shots resolve on the server: hits, damage and a kill reach both players', async () => {
+  const a = connect({ t: 'hello', v: PROTOCOL_VERSION, name: 'alice', room: 'duel' });
+  const b = connect({ t: 'hello', v: PROTOCOL_VERSION, name: 'bob', room: 'duel' });
+  const wb = await b.next((m) => m.t === 'welcome');
+  const first = await a.next((m) => m.t === 'snap' && m.players.some((p) => p[0] === wb.id) && m.tick > 2);
+  const bob = first.players.find((p) => p[0] === wb.id);
+  const you = first.you; // alice's exact state: [x, y, z, ..., eye at 10]
+  const origin = { x: you[0], y: you[1] + you[10], z: you[2] };
+  const d = { x: bob[1] - origin.x, y: bob[2] + 1.0 - origin.y, z: bob[3] - origin.z };
+  const len = Math.hypot(d.x, d.y, d.z);
+  const dir = { x: d.x / len, y: d.y / len, z: d.z / len };
+  const idle = { forward: 0, right: 0, jump: false, crouch: false, sprint: false, ads: 0 };
+
+  // three shots, 12 inputs apart (the rifle fires every 10 steps)
+  let seq = 0;
+  for (let shot = 0; shot < 3; shot++) {
+    const i = [];
+    for (let k = 0; k < 12; k++) i.push(writeInput(seq + k, idle, you[0], 0));
+    a.ws.send(JSON.stringify({ t: 'input', i, f: [writeShot(seq, origin, dir, first.tick)] }));
+    seq += 12;
+  }
+  const kill = await b.next((m) => m.t === 'snap' && m.ev.some((e) => e[0] === EV_KILL));
+  assert.deepEqual(kill.me.slice(0, 2), [0, 1], 'bob is at 0 hp and dead');
+  const hits = b.messages.filter((m) => m.t === 'snap').flatMap((m) => m.ev).filter((e) => e[0] === EV_HIT);
+  assert.equal(hits.length, 3);
+  assert.ok(hits.every((h) => h[1] !== wb.id && h[2] === wb.id && h[3] === BODY_DAMAGE));
+  const confirmed = await a.next((m) => m.t === 'snap' && m.me[4] === 1);
+  assert.equal(confirmed.me[2], MAG_SIZE - 3, "alice's ammo is tracked by the server");
+  a.ws.close();
   b.ws.close();
 });
 
