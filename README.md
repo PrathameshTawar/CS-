@@ -88,6 +88,10 @@ Works now:
 see every enemy spawn), a bomb objective, proper character models, and the
 sound of other players' gunfire.
 
+A page served over https (such as the Netlify deploy) can only connect to a
+`wss://` server, so playing online from there needs the server behind TLS.
+Local and LAN play over `ws://` work from `npm run dev`.
+
 `npm test` covers the shared gameplay and the server: rebuilding the
 browser's map from the seed, movement and bullets matching traces recorded
 from the original game bit for bit, client prediction landing exactly on the
