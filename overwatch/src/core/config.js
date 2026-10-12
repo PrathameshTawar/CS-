@@ -113,5 +113,7 @@ export function resolveConfig() {
     server: url.searchParams.get('server') || null,
     room: url.searchParams.get('room') || 'public',
     playerName: url.searchParams.get('name') || 'player',
+    // a new room's mode: 'teams' (rounds, default) or 'dm' (free-for-all)
+    mode: url.searchParams.get('mode') === 'dm' ? 'dm' : 'teams',
   };
 }

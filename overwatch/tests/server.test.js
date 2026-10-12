@@ -46,8 +46,8 @@ test('health check answers over HTTP', async () => {
 });
 
 test('two clients join one room and see each other move', async () => {
-  const a = connect({ t: 'hello', v: PROTOCOL_VERSION, name: 'alice', room: 'e2e' });
-  const b = connect({ t: 'hello', v: PROTOCOL_VERSION, name: 'bob', room: 'e2e' });
+  const a = connect({ t: 'hello', v: PROTOCOL_VERSION, name: 'alice', room: 'e2e', mode: 'dm' });
+  const b = connect({ t: 'hello', v: PROTOCOL_VERSION, name: 'bob', room: 'e2e', mode: 'dm' });
   const wa = await a.next((m) => m.t === 'welcome');
   const wb = await b.next((m) => m.t === 'welcome');
   assert.notEqual(wa.id, wb.id);
@@ -76,8 +76,8 @@ test('two clients join one room and see each other move', async () => {
 });
 
 test('shots resolve on the server: hits, damage and a kill reach both players', async () => {
-  const a = connect({ t: 'hello', v: PROTOCOL_VERSION, name: 'alice', room: 'duel' });
-  const b = connect({ t: 'hello', v: PROTOCOL_VERSION, name: 'bob', room: 'duel' });
+  const a = connect({ t: 'hello', v: PROTOCOL_VERSION, name: 'alice', room: 'duel', mode: 'dm' });
+  const b = connect({ t: 'hello', v: PROTOCOL_VERSION, name: 'bob', room: 'duel', mode: 'dm' });
   const wb = await b.next((m) => m.t === 'welcome');
   const first = await a.next((m) => m.t === 'snap' && m.players.some((p) => p[0] === wb.id) && m.tick > 2);
   const bob = first.players.find((p) => p[0] === wb.id);

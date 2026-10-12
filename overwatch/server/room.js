@@ -21,6 +21,16 @@
 // - Lag compensation: every tick records each player's hitbox; a shot rewinds
 //   the other players to the tick the shooter was looking at (at most
 //   MAX_REWIND_TICKS back) and traces shared/combat.js against them.
+//
+// Match model (mode 'teams'; 'dm' is free-for-all with respawns):
+// - Players are auto-balanced into ALPHA/BRAVO; no friendly fire (rounds
+//   pass through teammates).
+// - WARMUP (respawns on) until both teams have a player, then rounds:
+//   FREEZE (everyone at their team spawns, can't move or shoot) -> LIVE (no
+//   respawns; eliminate the other team, or have more players alive when the
+//   clock runs out) -> END (banner) -> next round. First to roundsToWin takes
+//   the match; MATCH_END shows the result, then a new match starts.
+// - Late joiners sit out (dead) until the next round starts.
 
 import { CollisionWorld } from '../shared/collision.js';
 import { createMoveState, stepMove } from '../shared/movement.js';
@@ -40,14 +50,26 @@ import {
   traceShot,
 } from '../shared/combat.js';
 import {
+  END_ELIMINATION,
+  END_FORFEIT,
+  END_TIME,
   EV_HIT,
   EV_KILL,
+  EV_MATCH_END,
+  EV_ROUND_END,
   EV_SHOT,
   EV_SPAWN,
   MAX_INPUTS_PER_MESSAGE,
   MAX_PLAYERS_PER_ROOM,
   MAX_REWIND_TICKS,
   MAX_SHOTS_PER_MESSAGE,
+  MODE_DM,
+  MODE_TEAMS,
+  PHASE_END,
+  PHASE_FREEZE,
+  PHASE_LIVE,
+  PHASE_MATCH_END,
+  PHASE_WARMUP,
   PL_CROUCH,
   PL_DEAD,
   PL_GROUNDED,
@@ -81,21 +103,34 @@ export const SPAWNS = [
   [6, 16], [-6, 16], [16, 6], [16, -6],
   [6, -16], [-6, -16], [-16, 6], [-16, -6],
 ];
+// each team spawns on its own side of the plaza (+Z / -Z)
+export const TEAM_SPAWNS = [SPAWNS.filter((s) => s[1] > 0), SPAWNS.filter((s) => s[1] < 0)];
+
+// round timings, in ticks (overridable per room, e.g. for tests)
+export const DEFAULT_RULES = Object.freeze({
+  freezeTicks: 3 * TICK_RATE,
+  roundTicks: 115 * TICK_RATE,
+  endTicks: 5 * TICK_RATE,
+  matchEndTicks: 10 * TICK_RATE,
+  roundsToWin: 8,
+});
 const SPAWN_HEIGHT = 60;
 const IDLE = Object.freeze({ forward: 0, right: 0, jump: false, crouch: false, sprint: false, ads: 0 });
 
 export class Room {
-  constructor(name, colliders, { seed, maxPlayers = MAX_PLAYERS_PER_ROOM } = {}) {
+  constructor(name, colliders, { seed, maxPlayers = MAX_PLAYERS_PER_ROOM, mode = MODE_TEAMS, rules = {} } = {}) {
     this.name = name;
     this.seed = seed;
     this.maxPlayers = maxPlayers;
+    this.mode = mode === MODE_DM ? MODE_DM : MODE_TEAMS;
+    this.rules = { ...DEFAULT_RULES, ...rules };
+    this.game = { phase: PHASE_WARMUP, endsAt: 0, round: 0, score: [0, 0], lastWinner: -1 };
     this.world = new CollisionWorld(colliders);
     this.players = new Map();
     this.tick = 0;
     this.events = []; // { n, tick, data }
     this._eventN = 0;
     this._nextId = 1;
-    this._nextSpawn = 0;
     this._out = { hasWish: false, landed: false, impact: 0 };
     this._end = { x: 0, y: 0, z: 0 };
     this._boxes = []; // rewound hitboxes for the shot being resolved (reused)
@@ -131,17 +166,41 @@ export class Room {
       lastFire: -Infinity,
       kills: 0,
       deaths: 0,
+      team: this.mode === MODE_TEAMS ? this._smallerTeam() : -1,
       rejected: 0, // shots refused (rate, ammo, origin): a cheat signal
       eventsSeen: this._eventN,
       history,
       hitbox: { min: [0, 0, 0], max: [0, 0, 0], surface: 'flesh', owner: null },
     };
     player.hitbox.owner = player;
-    const [x, z] = SPAWNS[this._nextSpawn++ % SPAWNS.length];
+    const [x, z] = this._spawnPoint(player);
     this._place(player, x, z);
+    // mid-round joiners sit out until the next round
+    const phase = this.game.phase;
+    if (this.mode === MODE_TEAMS && (phase === PHASE_LIVE || phase === PHASE_END || phase === PHASE_MATCH_END)) {
+      player.dead = true;
+      player.hp = 0;
+      player.respawnTick = Infinity;
+    }
     this.players.set(player.id, player);
     this._record(player);
     return player;
+  }
+
+  _smallerTeam() {
+    const n = [0, 0];
+    for (const p of this.players.values()) if (p.team >= 0) n[p.team]++;
+    return n[1] < n[0] ? 1 : 0;
+  }
+
+  // Free movement and shooting? Not while frozen at round start or after a match.
+  get frozen() {
+    return this.game.phase === PHASE_FREEZE || this.game.phase === PHASE_MATCH_END;
+  }
+
+  // Respawn on death? In deathmatch and warmup; not during a team round.
+  get respawning() {
+    return this.mode === MODE_DM || this.game.phase === PHASE_WARMUP;
   }
 
   leave(id) {
@@ -198,7 +257,8 @@ export class Room {
         this._runActions(p, input.seq);
         p.lastSeq = input.seq;
         p.pitch = input.pitch;
-        if (p.dead) continue; // inputs are consumed (acked) but nobody moves
+        // inputs are consumed (acked) but the dead and the frozen don't move
+        if (p.dead || this.frozen) continue;
         p.move.yaw = input.yaw;
         stepMove(p.move, input, H, this.world, this._out);
         p.steps++;
@@ -212,10 +272,102 @@ export class Room {
           if (t >= RELOAD_STEPS) p.reloadStart = -1;
         }
       }
-      if (p.dead && this.tick >= p.respawnTick) this._respawn(p);
+      if (p.dead && this.respawning && this.tick >= p.respawnTick) this._respawn(p);
     }
+    if (this.mode === MODE_TEAMS) this._updateMatch();
     for (const p of this.players.values()) this._record(p);
     this._trimEvents();
+  }
+
+  // ---- rounds ----
+
+  _updateMatch() {
+    const g = this.game;
+    const r = this.rules;
+    const count = [0, 0];
+    const alive = [0, 0];
+    for (const p of this.players.values()) {
+      count[p.team]++;
+      if (!p.dead) alive[p.team]++;
+    }
+    const bothTeams = count[0] > 0 && count[1] > 0;
+    switch (g.phase) {
+      case PHASE_WARMUP:
+        if (bothTeams) this._newMatch();
+        break;
+      case PHASE_FREEZE:
+      case PHASE_LIVE:
+        if (!bothTeams) {
+          this._endRound(count[0] > 0 ? 0 : count[1] > 0 ? 1 : -1, END_FORFEIT);
+        } else if (g.phase === PHASE_FREEZE) {
+          if (this.tick >= g.endsAt) {
+            g.phase = PHASE_LIVE;
+            g.endsAt = this.tick + r.roundTicks;
+          }
+        } else if (alive[0] === 0 || alive[1] === 0) {
+          this._endRound(alive[0] > 0 ? 0 : alive[1] > 0 ? 1 : -1, END_ELIMINATION);
+        } else if (this.tick >= g.endsAt) {
+          this._endRound(alive[0] > alive[1] ? 0 : alive[1] > alive[0] ? 1 : -1, END_TIME);
+        }
+        break;
+      case PHASE_END:
+        if (this.tick < g.endsAt) break;
+        if (!bothTeams) this._warmup();
+        else if (Math.max(g.score[0], g.score[1]) >= r.roundsToWin) {
+          g.phase = PHASE_MATCH_END;
+          g.endsAt = this.tick + r.matchEndTicks;
+          this._emit([EV_MATCH_END, g.score[0] > g.score[1] ? 0 : 1]);
+        } else this._startRound(g.round + 1);
+        break;
+      case PHASE_MATCH_END:
+        if (this.tick < g.endsAt) break;
+        if (bothTeams) this._newMatch();
+        else this._warmup();
+        break;
+    }
+  }
+
+  _newMatch() {
+    this.game.score = [0, 0];
+    this.game.lastWinner = -1;
+    for (const p of this.players.values()) {
+      p.kills = 0;
+      p.deaths = 0;
+    }
+    this._startRound(1);
+  }
+
+  // Everyone to their team spawns, full health and ammo, frozen briefly.
+  _startRound(n) {
+    const g = this.game;
+    g.round = n;
+    g.phase = PHASE_FREEZE;
+    g.endsAt = this.tick + this.rules.freezeTicks;
+    const used = [0, 0];
+    for (const p of this.players.values()) {
+      const spawns = TEAM_SPAWNS[p.team];
+      const [x, z] = spawns[used[p.team]++ % spawns.length];
+      this._revive(p, x, z);
+    }
+  }
+
+  _endRound(winner, reason) {
+    const g = this.game;
+    if (winner >= 0) g.score[winner]++;
+    g.lastWinner = winner;
+    g.phase = PHASE_END;
+    g.endsAt = this.tick + this.rules.endTicks;
+    this._emit([EV_ROUND_END, g.round, winner, reason]);
+  }
+
+  // Back to warmup (a team emptied out): free play, everyone respawns.
+  _warmup() {
+    const g = this.game;
+    g.phase = PHASE_WARMUP;
+    g.round = 0;
+    g.score = [0, 0];
+    g.lastWinner = -1;
+    for (const p of this.players.values()) if (p.dead) p.respawnTick = this.tick;
   }
 
   // Shots/reloads due before input `seq` is applied.
@@ -241,6 +393,10 @@ export class Room {
 
   _fire(p, shot) {
     if (p.dead) return;
+    if (this.frozen) {
+      p.rejected++;
+      return;
+    }
     const m = p.move;
     const reloading = p.reloadStart >= 0;
     const eyeDist = Math.hypot(shot.origin.x - m.pos.x, shot.origin.y - (m.pos.y + m.eye), shot.origin.z - m.pos.z);
@@ -259,6 +415,7 @@ export class Room {
     boxes.length = 0;
     for (const other of this.players.values()) {
       if (other === p || other.dead) continue;
+      if (p.team >= 0 && other.team === p.team) continue; // no friendly fire: rounds pass through
       if (this._rewind(other, viewTick)) boxes.push(other.hitbox);
     }
     this.world.dynamics = boxes;
@@ -277,7 +434,7 @@ export class Room {
     this._emit([EV_HIT, p.id, target.id, damage, headshot ? 1 : 0, r3(hit.point.x), r3(hit.point.y), r3(hit.point.z)]);
     if (target.hp === 0) {
       target.dead = true;
-      target.respawnTick = this.tick + RESPAWN_TICKS;
+      target.respawnTick = this.respawning ? this.tick + RESPAWN_TICKS : Infinity;
       target.deaths++;
       p.kills++;
       this._emit([EV_KILL, p.id, target.id, headshot ? 1 : 0]);
@@ -320,13 +477,21 @@ export class Room {
   }
 
   _respawn(p) {
-    // the spawn farthest from every living opponent
-    let best = SPAWNS[0];
+    const [x, z] = this._spawnPoint(p);
+    this._revive(p, x, z);
+    this._emit([EV_SPAWN, p.id]);
+  }
+
+  // The spawn (from the player's team side, or anywhere in deathmatch)
+  // farthest from every living opponent.
+  _spawnPoint(p) {
+    const spawns = p.team >= 0 ? TEAM_SPAWNS[p.team] : SPAWNS;
+    let best = spawns[0];
     let bestD = -1;
-    for (const s of SPAWNS) {
+    for (const s of spawns) {
       let d = Infinity;
       for (const o of this.players.values()) {
-        if (o === p || o.dead) continue;
+        if (o === p || o.dead || (p.team >= 0 && o.team === p.team)) continue;
         d = Math.min(d, Math.hypot(o.move.pos.x - s[0], o.move.pos.z - s[1]));
       }
       if (d > bestD) {
@@ -334,7 +499,11 @@ export class Room {
         best = s;
       }
     }
-    this._place(p, best[0], best[1]);
+    return best;
+  }
+
+  _revive(p, x, z) {
+    this._place(p, x, z);
     p.hp = MAX_HEALTH;
     p.dead = false;
     p.ammo = MAG_SIZE;
@@ -342,7 +511,6 @@ export class Room {
     p.reloadStart = -1;
     p.lastFire = -Infinity;
     p.spawns++;
-    this._emit([EV_SPAWN, p.id]);
   }
 
   // Fresh movement state at a spawn, settled onto the ground with one idle
@@ -365,6 +533,11 @@ export class Room {
     if (drop) this.events.splice(0, drop);
   }
 
+  _gameState() {
+    const g = this.game;
+    return [g.phase, g.endsAt, g.round, g.score[0], g.score[1], g.lastWinner, this.rules.roundsToWin, this.mode === MODE_DM ? 1 : 0];
+  }
+
   // Snapshot for one recipient: their exact state, their combat status,
   // everyone else, and the events they haven't seen. Advances the
   // recipient's event cursor.
@@ -383,6 +556,7 @@ export class Room {
         p.name,
         p.kills,
         p.deaths,
+        p.team,
       ]);
     }
     const ev = [];
@@ -397,8 +571,9 @@ export class Room {
       tick: this.tick,
       ack: me.lastSeq,
       you: packState(me.move),
-      me: [me.hp, me.dead ? 1 : 0, me.ammo, me.reserve, me.kills, me.deaths, me.spawns],
+      me: [me.hp, me.dead ? 1 : 0, me.ammo, me.reserve, me.kills, me.deaths, me.spawns, me.team],
       players,
+      game: this._gameState(),
       ev,
     };
   }

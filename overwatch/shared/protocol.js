@@ -6,7 +6,9 @@
 // angles (yaw/pitch) are the only client-owned state, as in every FPS.
 //
 //   client -> server
-//     { t: 'hello', v, name, room }             first message, once
+//     { t: 'hello', v, name, room, mode? }      first message, once; mode
+//                                               ('teams' | 'dm') applies when
+//                                               the hello creates the room
 //     { t: 'input', i: [[seq, f, r, flags, yaw, pitch], ...],
 //       f?: [[seq, ox, oy, oz, dx, dy, dz, viewTick], ...],   shots
 //       r?: [seq, ...] }                                      reload starts
@@ -26,11 +28,13 @@
 // Snapshot: `ack` is the last input seq applied. `you` is the recipient's full
 // movement state (see packState) so the client can rewind to it and replay
 // unacknowledged inputs; `me` is [hp, dead, ammo, reserve, kills, deaths,
-// spawns]. `players` holds every OTHER player as
-// [id, x, y, z, yaw, pitch, flags, name, kills, deaths]. `ev` lists combat
-// events since the recipient's last snapshot (EV_* below).
+// spawns, team]. `players` holds every OTHER player as
+// [id, x, y, z, yaw, pitch, flags, name, kills, deaths, team]. `game` is
+// [phase, phaseEndsTick, round, scoreAlpha, scoreBravo, lastRoundWinner,
+// roundsToWin, deathmatch]. `ev` lists events since the recipient's last
+// snapshot (EV_* below).
 
-export const PROTOCOL_VERSION = 2;
+export const PROTOCOL_VERSION = 3;
 export const TICK_RATE = 120; // server steps per second; equals the client's FIXED_STEP
 export const SNAPSHOT_EVERY = 6; // ticks between snapshots (20 Hz)
 export const INPUT_SEND_EVERY = 4; // client fixed steps per input batch (30 Hz)
@@ -56,6 +60,27 @@ export const EV_SHOT = 1; // [EV_SHOT, shooterId, ox, oy, oz, ex, ey, ez]
 export const EV_HIT = 2; // [EV_HIT, shooterId, targetId, damage, headshot, x, y, z]
 export const EV_KILL = 3; // [EV_KILL, killerId, victimId, headshot]
 export const EV_SPAWN = 4; // [EV_SPAWN, playerId]
+export const EV_ROUND_END = 5; // [EV_ROUND_END, round, winnerTeam (-1 draw), reason]
+export const EV_MATCH_END = 6; // [EV_MATCH_END, winnerTeam]
+
+// game modes (chosen by the hello that creates a room)
+export const MODE_TEAMS = 'teams';
+export const MODE_DM = 'dm';
+
+// teams (deathmatch players have team -1)
+export const TEAM_NAMES = ['ALPHA', 'BRAVO'];
+
+// match phases
+export const PHASE_WARMUP = 0; // waiting for both teams; respawns on
+export const PHASE_FREEZE = 1; // round start: placed at spawns, can't move or shoot
+export const PHASE_LIVE = 2; // the round: no respawns
+export const PHASE_END = 3; // round over, banner up
+export const PHASE_MATCH_END = 4; // match over, scoreboard up, frozen
+
+// why a round ended
+export const END_ELIMINATION = 0;
+export const END_TIME = 1;
+export const END_FORFEIT = 2; // a team emptied out
 
 export function encode(msg) {
   return JSON.stringify(msg);
