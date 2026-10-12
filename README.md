@@ -17,6 +17,7 @@ cd overwatch
 npm install
 npm run dev        # http://127.0.0.1:5173
 npm run build      # -> overwatch/dist/
+npm test           # shared gameplay tests (Node built-in runner, no deps)
 ```
 
 Controls: click to lock the mouse, **WASD** move, **Shift** sprint, **Space**
@@ -27,10 +28,25 @@ URL options: `?q=low|medium|high|ultra` (quality), `?time=day|golden|dusk|night`
 
 Engine rules for contributors are in [`overwatch/ARCHITECTURE.md`](overwatch/ARCHITECTURE.md).
 
-**Visual regression check.** `npm run gate` captures 7 fixed camera shots and
-diffs them against `overwatch/shots/baseline/`. It needs Chrome or Chromium
-(set `CHROME_PATH` if it is not in a standard location) and a running dev
-server.
+**Screenshot checks.** Both need Chrome or Chromium (set `CHROME_PATH` if it
+is not in a standard location) and a running dev server.
+- Regression against the committed baselines: `npm run shotset && npm run imagediff`
+  captures 7 fixed camera shots and compares them pixel-for-pixel with
+  `overwatch/shots/baseline/`.
+- Determinism: `npm run gate` re-captures the baselines, captures again and
+  diffs the two runs. It overwrites `shots/baseline/`, so don't commit those
+  files after a gate run unless the visual change is intended.
+
+**Multiplayer groundwork.** Gameplay the server will also run lives in
+`overwatch/shared/` (collision, movement, map colliders, PRNG). `npm test`
+proves the server can rebuild the browser's map from the seed alone and that
+movement reproduces a trace recorded from the original game bit-for-bit.
+Known behaviours the multiplayer work has to account for:
+- Falling is instant: the mover snaps the player onto the highest surface
+  below them, so drops and the 60 m spawn land in one step.
+- The map has no edge walls; walking past ±60 m falls forever.
+- Collision resolves overlap instead of sweeping, so the server must only
+  apply small per-step moves (it can't trust client-sized deltas).
 
 ## STRIDE OPS
 
@@ -50,7 +66,8 @@ design docs in [`stride-ops/docs/`](stride-ops/docs/).
 ## Repository layout
 
 ```
-overwatch/     Vite + JS game: src/, tools/ (capture, imagediff), shots/baseline/
+overwatch/     Vite + JS game: src/, shared/ (client+server gameplay), tests/,
+               tools/ (capture, imagediff), shots/baseline/
 stride-ops/    TypeScript engine: src/, tests/, demo/, docs/, webpack + jest config
 netlify.toml   deploys overwatch/ (stride-ops/netlify.toml deploys the other)
 ```
