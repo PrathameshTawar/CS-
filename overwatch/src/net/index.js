@@ -15,17 +15,31 @@
 //   lag compensation). The weapon still traces locally for instant tracers,
 //   impacts and blood (remote players carry client-side hitboxes); damage,
 //   kills and respawns come only from the server.
+// - Matches: the server runs teams and rounds (or deathmatch with
+//   `&mode=dm`). We freeze the player when it says so, colour players by
+//   team, give only enemies hitboxes (no friendly fire), and draw the score,
+//   round timer, banners and a scoreboard (hold Tab).
 
 import * as THREE from 'three';
 import { MAG_SIZE, RESERVE, playerHitbox } from '../../shared/combat.js';
 import { HALF, HALF_Y_CROUCH, stepMove } from '../../shared/movement.js';
 import {
+  END_ELIMINATION,
+  END_FORFEIT,
   EV_HIT,
   EV_KILL,
+  EV_MATCH_END,
+  EV_ROUND_END,
   EV_SHOT,
   INPUT_SEND_EVERY,
+  PHASE_END,
+  PHASE_FREEZE,
+  PHASE_LIVE,
+  PHASE_MATCH_END,
+  PHASE_WARMUP,
   PL_CROUCH,
   PL_DEAD,
+  TEAM_NAMES,
   PROTOCOL_VERSION,
   TICK_RATE,
   decode,
@@ -39,6 +53,8 @@ const INTERP_TICKS = 12; // 100 ms: two snapshot intervals of cushion
 const PENDING_MAX = 256; // ~2 s of unacknowledged inputs at 120 Hz
 const PING_EVERY = 1; // seconds
 const TELEPORT = 4; // m between snapshots: a respawn, don't slide across the map
+const TEAM_COLORS = [0xd9663a, 0x3a7bd9]; // ALPHA orange, BRAVO blue
+const TEAM_CSS = ['#ff9a6a', '#7fb4ff'];
 
 export class NetSystem {
   static id = 'net';
@@ -55,6 +71,9 @@ export class NetSystem {
     this.rtt = 0;
     this.kills = 0;
     this.deaths = 0;
+    this.team = -1;
+    this.game = null; // [phase, endsAt, round, scoreA, scoreB, lastWinner, roundsToWin, deathmatch]
+    this._banner = null; // { text, until } from round/match events
     this.viewTick = 0; // the server tick remote players are drawn at
     this.lastCorrection = 0; // metres the last reconcile moved us (debug)
 
@@ -89,6 +108,26 @@ export class NetSystem {
       'position:fixed;top:12px;left:12px;font:12px/1.4 ui-monospace,monospace;color:#d8e2f0;' +
       'background:rgba(8,12,20,.55);padding:4px 8px;border-radius:4px;pointer-events:none;z-index:5';
     document.body.appendChild(this._hud);
+
+    // match HUD: score + timer + banner (top centre), scoreboard (Tab)
+    this._top = document.createElement('div');
+    this._top.style.cssText =
+      'position:fixed;top:10px;left:50%;transform:translateX(-50%);text-align:center;pointer-events:none;z-index:5;' +
+      'font:600 15px/1.3 ui-monospace,monospace;color:#eef2f8;text-shadow:0 1px 3px #000';
+    document.body.appendChild(this._top);
+    this._board = document.createElement('div');
+    this._board.style.cssText =
+      'position:fixed;top:18%;left:50%;transform:translateX(-50%);min-width:420px;display:none;pointer-events:none;z-index:6;' +
+      'background:rgba(8,12,20,.82);border-radius:6px;padding:14px 18px;font:13px/1.6 ui-monospace,monospace;color:#dfe6ee';
+    document.body.appendChild(this._board);
+    this._showBoard = false;
+    this._onKey = (ev) => {
+      if (ev.code !== 'Tab') return;
+      ev.preventDefault();
+      this._showBoard = ev.type === 'keydown';
+    };
+    document.addEventListener('keydown', this._onKey);
+    document.addEventListener('keyup', this._onKey);
     this.ws = null; // opened on the first frame, once boot (shader prewarm) is done
 
     const e = ctx.events;
@@ -114,7 +153,7 @@ export class NetSystem {
     }
     this.ws = ws;
     ws.onopen = () => {
-      ws.send(encode({ t: 'hello', v: PROTOCOL_VERSION, name: cfg.playerName, room: cfg.room }));
+      ws.send(encode({ t: 'hello', v: PROTOCOL_VERSION, name: cfg.playerName, room: cfg.room, mode: cfg.mode }));
     };
     ws.onmessage = (e) => this._onMessage(decode(e.data));
     ws.onclose = (e) => {
@@ -130,6 +169,8 @@ export class NetSystem {
     this._buffer.length = 0;
     this._clearRemotes();
     this.player.dead = false;
+    this.player.frozen = false;
+    this.game = null;
   }
 
   _clearRemotes() {
@@ -151,6 +192,7 @@ export class NetSystem {
       this.status = 'online';
     } else if (msg.t === 'snap') {
       for (const row of msg.players) this._names.set(row[0], row[7]);
+      this._lastSnap = msg;
       this._applyCombat(msg);
       this._snap = msg;
       this._buffer.push(msg);
@@ -195,10 +237,20 @@ export class NetSystem {
           byMe: killer === me,
           onMe: victim === me,
         });
+      } else if (type === EV_ROUND_END) {
+        const [, , winner, reason] = ev;
+        const why = reason === END_ELIMINATION ? 'ELIMINATION' : reason === END_FORFEIT ? 'FORFEIT' : 'TIME';
+        this._banner = winner < 0 ? 'ROUND DRAW' : `${TEAM_NAMES[winner]} WINS THE ROUND · ${why}`;
+      } else if (type === EV_MATCH_END) {
+        this._banner = `${TEAM_NAMES[ev[1]]} WINS THE MATCH`;
       }
     }
 
-    const [hp, dead, , , kills, deaths, spawns] = msg.me;
+    const [hp, dead, , , kills, deaths, spawns, team] = msg.me;
+    this.team = team;
+    this.game = msg.game;
+    const phase = msg.game[0];
+    p.frozen = !msg.game[7] && (phase === PHASE_FREEZE || phase === PHASE_MATCH_END);
     if (hp < p.health) {
       const from = this._remotes.get(this._lastAttacker);
       e.emit('damage:taken', { amount: p.health - hp, from: from ? { ...from.group.position } : null, health: hp });
@@ -268,7 +320,7 @@ export class NetSystem {
       const slot = this._pending[(start + k) % PENDING_MAX];
       if (slot.seq <= snap.ack) continue;
       kept++;
-      if (p.dead) continue;
+      if (p.dead || p.frozen) continue;
       move.yaw = slot.yaw;
       stepMove(move, slot.input, h, this.physics, this._out);
     }
@@ -290,6 +342,7 @@ export class NetSystem {
     }
     this._interpolate(ctx);
     this._drawHud();
+    this._drawMatch(ctx);
   }
 
   _interpolate(ctx) {
@@ -331,17 +384,19 @@ export class NetSystem {
           }
         }
       }
-      this._placeRemote(id, row[7], x, y, z, yaw, (flags & PL_CROUCH) !== 0, (flags & PL_DEAD) !== 0);
+      this._placeRemote(id, row[7], x, y, z, yaw, (flags & PL_CROUCH) !== 0, (flags & PL_DEAD) !== 0, row[10]);
     }
     for (const id of [...this._remotes.keys()]) {
       if (!seen.has(id)) this._removeRemote(id);
     }
   }
 
-  _placeRemote(id, name, x, y, z, yaw, crouching, dead) {
+  _placeRemote(id, name, x, y, z, yaw, crouching, dead, team) {
     let r = this._remotes.get(id);
     if (!r) {
-      const material = new THREE.MeshStandardMaterial({ color: new THREE.Color().setHSL((id * 0.618) % 1, 0.55, 0.5), roughness: 0.7 });
+      // team colour, or a distinct hue per player in deathmatch
+      const color = team >= 0 ? new THREE.Color(TEAM_COLORS[team]) : new THREE.Color().setHSL((id * 0.618) % 1, 0.55, 0.5);
+      const material = new THREE.MeshStandardMaterial({ color, roughness: 0.7 });
       const body = new THREE.Mesh(this._bodyGeo, material);
       const head = new THREE.Mesh(this._headGeo, material);
       body.castShadow = head.castShadow = true;
@@ -360,10 +415,12 @@ export class NetSystem {
     r.head.position.y = height - 0.12;
     r.group.position.set(x, dead ? y + 0.34 : y, z);
     r.group.rotation.set(0, yaw, dead ? Math.PI / 2 : 0, 'YXZ'); // the dead lie down
-    if (dead && r.boxed) {
+    // hitboxes for living enemies only: teammates can't be shot
+    const enemy = team < 0 || team !== this.team;
+    if ((dead || !enemy) && r.boxed) {
       this.physics.removeDynamic(r.box);
       r.boxed = false;
-    } else if (!dead) {
+    } else if (!dead && enemy) {
       if (!r.boxed) {
         this.physics.addDynamic(r.box);
         r.boxed = true;
@@ -396,14 +453,81 @@ export class NetSystem {
     if (text !== this._hudText) this._hud.textContent = this._hudText = text;
   }
 
+  // Score, round timer and banner at the top; the scoreboard on Tab and at
+  // the end of a match.
+  _drawMatch(ctx) {
+    const g = this.game;
+    let top = '';
+    let board = false;
+    if (g && this.status === 'online') {
+      const [phase, endsAt, round, sa, sb, , roundsToWin, dm] = g;
+      const nowTick = ctx.time.state.raw * TICK_RATE + (this._tickOffset || 0);
+      const secs = Math.max(0, Math.ceil((endsAt - nowTick) / TICK_RATE));
+      const clock = `${Math.floor(secs / 60)}:${String(secs % 60).padStart(2, '0')}`;
+      if (dm) {
+        top = 'DEATHMATCH';
+      } else {
+        const score =
+          `<span style="color:${TEAM_CSS[0]}">${TEAM_NAMES[0]} ${sa}</span>` +
+          `  ${phase === PHASE_LIVE || phase === PHASE_FREEZE ? clock : '·'}  ` +
+          `<span style="color:${TEAM_CSS[1]}">${sb} ${TEAM_NAMES[1]}</span>`;
+        let line = '';
+        if (phase === PHASE_WARMUP) line = 'WARMUP · waiting for players on both teams';
+        else if (phase === PHASE_FREEZE) line = `ROUND ${round} · GET READY`;
+        else if (phase === PHASE_END || phase === PHASE_MATCH_END) line = this._banner || '';
+        if (phase === PHASE_LIVE && Math.max(sa, sb) === roundsToWin - 1) line = 'MATCH POINT';
+        const you = this.team >= 0 ? `<div style="font-size:11px;color:${TEAM_CSS[this.team]}">YOU ARE ${TEAM_NAMES[this.team]}</div>` : '';
+        top = `<div style="white-space:pre">${score}</div><div style="font-size:12px;letter-spacing:2px;color:#ffd38a">${line}</div>${you}`;
+      }
+      board = this._showBoard || phase === PHASE_MATCH_END;
+    }
+    if (top !== this._topHtml) this._top.innerHTML = this._topHtml = top;
+    this._board.style.display = board ? 'block' : 'none';
+    if (board) {
+      const html = this._boardHtml();
+      if (html !== this._boardCache) this._board.innerHTML = this._boardCache = html;
+    }
+  }
+
+  _boardHtml() {
+    const snap = this._lastSnap;
+    if (!snap) return '';
+    const rows = snap.players.map((r) => ({ name: r[7], kills: r[8], deaths: r[9], team: r[10], me: false }));
+    rows.push({ name: this.ctx.config.playerName, kills: this.kills, deaths: this.deaths, team: this.team, me: true });
+    const line = (r) =>
+      `<tr style="${r.me ? 'color:#fff;font-weight:700' : ''}"><td style="padding-right:24px">${esc(r.name)}${r.me ? ' (you)' : ''}</td>` +
+      `<td style="text-align:right;width:40px">${r.kills}</td><td style="text-align:right;width:40px">${r.deaths}</td></tr>`;
+    const head = '<tr style="color:#8b94a6"><td></td><td style="text-align:right">K</td><td style="text-align:right">D</td></tr>';
+    const sort = (a, b) => b.kills - a.kills || a.deaths - b.deaths;
+    if (this.game && this.game[7]) {
+      return `<div style="letter-spacing:2px;margin-bottom:6px">DEATHMATCH</div><table style="width:100%;border-collapse:collapse">${head}${rows.sort(sort).map(line).join('')}</table>`;
+    }
+    return [0, 1]
+      .map((t) => {
+        const score = this.game ? this.game[3 + t] : 0;
+        const members = rows.filter((r) => r.team === t).sort(sort);
+        return `<div style="color:${TEAM_CSS[t]};letter-spacing:2px;margin:6px 0 2px">${TEAM_NAMES[t]} · ${score}</div><table style="width:100%;border-collapse:collapse">${head}${members.map(line).join('')}</table>`;
+      })
+      .join('');
+  }
+
   dispose() {
     for (const off of this._subs) off();
+    document.removeEventListener('keydown', this._onKey);
+    document.removeEventListener('keyup', this._onKey);
+    this._top.remove();
+    this._board.remove();
     if (this.ws) this.ws.close();
     this._clearRemotes();
     this._bodyGeo.dispose();
     this._headGeo.dispose();
     this._hud.remove();
   }
+}
+
+// player names go into HTML
+function esc(s) {
+  return String(s).replace(/[&<>"']/g, (c) => `&#${c.charCodeAt(0)};`);
 }
 
 // shortest signed difference between two angles (radians)

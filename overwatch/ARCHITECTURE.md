@@ -116,6 +116,11 @@ the rules without sockets; `index.js` adds HTTP + WebSocket, rooms and the
 - The client's weapon still traces locally for instant tracers and blood:
   `net` gives remote players client-side `flesh` hitboxes. Damage,
   hitmarkers, kills and respawns come only from the server.
+- Matches (`room.js`, mode `teams`): WARMUP → FREEZE → LIVE → END → … →
+  MATCH_END, with timings in `DEFAULT_RULES`. Teammates are skipped in the
+  hit trace (no friendly fire). While FREEZE or MATCH_END is on, the server
+  acks inputs without moving anyone, and the client sets `player.frozen` so
+  prediction agrees. Mode `dm` skips teams and rounds.
 
 Client and server agree bit-for-bit within one JS runtime. Across runtimes
 (Chromium vs Node) `Math.sin`/`cos` can differ in the last bit, so expect

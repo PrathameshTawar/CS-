@@ -37,7 +37,7 @@ is not in a standard location) and a running dev server.
   diffs the two runs. It overwrites `shots/baseline/`, so don't commit those
   files after a gate run unless the visual change is intended.
 
-### Multiplayer (free-for-all deathmatch)
+### Multiplayer (team rounds or deathmatch)
 
 ```bash
 cd overwatch
@@ -47,10 +47,22 @@ npm run dev          # in a second terminal
 ```
 
 Open `http://127.0.0.1:5173/?server=ws://localhost:8787&name=alice` in two
-windows (change `name`; add `&room=<name>` for a private room). Each window
-sees the other player as a stand-in figure and can shoot them. The status
-line in the top-left shows the room, player count, ping and your kills and
-deaths.
+windows (change `name`; add `&room=<name>` for a private room). Rooms play
+**team rounds** by default; add `&mode=dm` when creating a room for
+free-for-all deathmatch. Hold **Tab** for the scoreboard.
+
+How a team match works:
+1. Players are auto-balanced into **ALPHA** (orange) and **BRAVO** (blue),
+   each spawning on its own side of the plaza. There's no friendly fire:
+   bullets pass through teammates.
+2. **Warmup** (free play, respawns on) lasts until both teams have a player.
+3. Each round starts with a 3-second **freeze** at the team spawns. Then
+   it's **live** for up to 1:55, with no respawns. Eliminate the other team
+   to win, or have more players alive when time runs out (equal numbers is a
+   draw).
+4. First to **8 rounds** wins the match. The result and scoreboard show for
+   10 seconds, then a fresh match starts.
+5. Anyone joining mid-round sits out until the next round.
 
 To play across two PCs on one network, run the server on one of them, start
 the game with `npm run dev -- --host` so other machines can load it, and use
@@ -62,9 +74,9 @@ Works now:
   movement is predicted, so it feels instant, and other players are smoothed.
 - Shooting decided by the server, with lag compensation: a shot hits where
   you saw the target, up to 400 ms back.
-- Damage: 34 to the body (three hits kill) and 100 for a headshot. You
-  respawn after 3 s at the spawn point farthest from enemies, with a full
-  magazine.
+- Damage: 34 to the body (three hits kill) and 100 for a headshot. In
+  deathmatch and warmup you respawn after 3 s at the spawn point farthest
+  from enemies, with a full magazine.
 - The server enforces fire rate, ammo, reloads and where a shot can come
   from, so a modified client can't fire faster, skip reloads or shoot from
   somewhere it isn't.
@@ -72,14 +84,16 @@ Works now:
   for every kill in the room, and dead players lie down.
 - AI enemies are switched off online.
 
-**Not networked yet:** teams, rounds and a scoreboard (step 5), proper
-character models, and the sound of other players' gunfire.
+**Not yet:** a map built for competitive play (every spawn can currently
+see every enemy spawn), a bomb objective, proper character models, and the
+sound of other players' gunfire.
 
 `npm test` covers the shared gameplay and the server: rebuilding the
 browser's map from the seed, movement and bullets matching traces recorded
 from the original game bit for bit, client prediction landing exactly on the
 server's state, the anti-speed-hack limit, all the combat rules including
-lag compensation, and real WebSocket clients moving and fighting.
+lag compensation, the whole round and match flow, and real WebSocket
+clients moving and fighting.
 
 Known behaviours the multiplayer work still has to account for:
 - Falling is instant: the mover snaps the player onto the highest surface
