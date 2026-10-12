@@ -71,22 +71,22 @@ export const ARENA = {
     { min: [-19.5, 0, 16], max: [-16.5, 0.42, 19], surface: 'concrete', style: 'ledge' },
     { min: [-19.5, 0, -19], max: [-16.5, 0.42, -16], surface: 'concrete', style: 'ledge' },
     // A-lane cover crates
-    { min: [-19.5, 0, 11], max: [-17, 1.8, 14], surface: 'paintedWood', style: 'crate' },
-    { min: [-19.5, 0, -14], max: [-17, 1.8, -11], surface: 'paintedWood', style: 'crate' },
-    { min: [-11.5, 0, 3], max: [-9, 1.2, 6], surface: 'paintedWood', style: 'crate' },
-    { min: [-11.5, 0, -6], max: [-9, 1.2, -3], surface: 'paintedWood', style: 'crate' },
+    { min: [-19.5, 0, 11], max: [-17, 1.8, 14], surface: 'wood', style: 'crate' },
+    { min: [-19.5, 0, -14], max: [-17, 1.8, -11], surface: 'wood', style: 'crate' },
+    { min: [-11.5, 0, 3], max: [-9, 1.2, 6], surface: 'wood', style: 'crate' },
+    { min: [-11.5, 0, -6], max: [-9, 1.2, -3], surface: 'wood', style: 'crate' },
 
     // --- Mid Lane (Crates & Fast Fights, x: -6 to 6) ---
     // Central container blocking dead-center line of sight
     { min: [-2.5, 0, -2], max: [2.5, 2.5, 2], surface: 'metal', style: 'crate' },
     // Step-up ledges on central container (height 0.42m)
-    { min: [-1.5, 0, 2], max: [1.5, 0.42, 3], surface: 'paintedWood', style: 'ledge' },
-    { min: [-1.5, 0, -3], max: [1.5, 0.42, -2], surface: 'paintedWood', style: 'ledge' },
+    { min: [-1.5, 0, 2], max: [1.5, 0.42, 3], surface: 'wood', style: 'ledge' },
+    { min: [-1.5, 0, -3], max: [1.5, 0.42, -2], surface: 'wood', style: 'ledge' },
     // Staggered mid crates
-    { min: [-5.5, 0, 5], max: [-3, 2.0, 8], surface: 'paintedWood', style: 'crate' },
-    { min: [3, 0, -8], max: [5.5, 2.0, -5], surface: 'paintedWood', style: 'crate' },
-    { min: [3, 0, 5], max: [5.5, 2.0, 8], surface: 'paintedWood', style: 'crate' },
-    { min: [-5.5, 0, -8], max: [-3, 2.0, -5], surface: 'paintedWood', style: 'crate' },
+    { min: [-5.5, 0, 5], max: [-3, 2.0, 8], surface: 'wood', style: 'crate' },
+    { min: [3, 0, -8], max: [5.5, 2.0, -5], surface: 'wood', style: 'crate' },
+    { min: [3, 0, 5], max: [5.5, 2.0, 8], surface: 'wood', style: 'crate' },
+    { min: [-5.5, 0, -8], max: [-3, 2.0, -5], surface: 'wood', style: 'crate' },
 
     // --- B-Lane (Tight Corridor / Interior, x: 8 to 20) ---
     // Center chicane wall
@@ -98,7 +98,7 @@ export const ARENA = {
     // B-lane cover crates
     { min: [16, 0, 4], max: [18.5, 1.4, 6], surface: 'metal', style: 'crate' },
     { min: [16, 0, -6], max: [18.5, 1.4, -4], surface: 'metal', style: 'crate' },
-    { min: [9.5, 0, 16], max: [12, 1.4, 18], surface: 'paintedWood', style: 'crate' },
-    { min: [9.5, 0, -18], max: [12, 1.4, -16], surface: 'paintedWood', style: 'crate' },
+    { min: [9.5, 0, 16], max: [12, 1.4, 18], surface: 'wood', style: 'crate' },
+    { min: [9.5, 0, -18], max: [12, 1.4, -16], surface: 'wood', style: 'crate' },
   ],
 };

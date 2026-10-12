@@ -17,6 +17,19 @@ const _p = new THREE.Vector3();
 const _s = new THREE.Vector3();
 const _e = new THREE.Euler();
 
+// Physics surface (map data, drives impact FX/audio) -> the material it is
+// drawn with (materials/index.js).
+export const ARENA_MATERIAL = Object.freeze({
+  concrete: 'concrete',
+  brick: 'brick',
+  wood: 'wood',
+  metal: 'paintedMetal',
+  plaster: 'plaster',
+  sand: 'sand',
+  glass: 'glass',
+  fabric: 'fabric',
+});
+
 export class WorldSystem {
   static id = 'world';
   static deps = ['render', 'materials', 'sky'];
@@ -652,15 +665,17 @@ export class WorldSystem {
       const cy = (b.min[1] + b.max[1]) / 2;
       const cz = (b.min[2] + b.max[2]) / 2;
 
+      // map data uses physics surface names; draw each with its material
+      const look = ARENA_MATERIAL[b.surface] || 'concrete';
       let mat;
       if (b.style === 'crate') {
-        mat = m.make(b.surface || 'paintedWood', { repeat: Math.max(1, Math.round(w / 2)) });
+        mat = m.make(look, { repeat: Math.max(1, Math.round(w / 2)) });
       } else if (b.style === 'edge') {
-        mat = m.make(b.surface || 'brick', { repeat: 3, size: 1024 });
+        mat = m.make(look, { repeat: 3, size: 1024 });
       } else if (b.style === 'ledge') {
         mat = m.make('concrete', { repeat: 1 });
       } else {
-        mat = m.make(b.surface || 'brick', { repeat: 2 });
+        mat = m.make(look, { repeat: 2 });
       }
 
       const mesh = new THREE.Mesh(this._geom(new THREE.BoxGeometry(w, h, d)), mat);

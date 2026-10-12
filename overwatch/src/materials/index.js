@@ -552,6 +552,9 @@ const SURFACES = {
 
 const SIZES = { wall: 1024, ground: 2048 };
 
+// The material names `make()` accepts (tests check maps only use these).
+export const MATERIAL_NAMES = Object.freeze(Object.keys(SURFACES));
+
 export class MaterialsSystem {
   static id = 'materials';
   static deps = ['render'];
