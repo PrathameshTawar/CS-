@@ -22,9 +22,13 @@ export function layoutRng(seed) {
 }
 
 // Builds the map headlessly and returns its static colliders
-// ([{min:[x,y,z], max:[x,y,z], surface}]). Async because three.js and the
-// world module are loaded on demand, keeping this module itself dependency-free.
-export async function buildColliders(seed) {
+// ([{min:[x,y,z], max:[x,y,z], surface}]). For 'arena', loads pure data directly
+// without Three.js or headless world.
+export async function buildColliders(seed, map = 'plaza') {
+  if (map === 'arena') {
+    const { ARENA } = await import('./maps/arena.js');
+    return ARENA.boxes;
+  }
   const THREE = await import('three');
   const { WorldSystem } = await import('../src/world/index.js');
   const stubMaterial = () => new THREE.MeshBasicMaterial();
@@ -35,7 +39,7 @@ export async function buildColliders(seed) {
   const scene = new THREE.Scene();
   const world = new WorldSystem();
   world.init({
-    config: { seed },
+    config: { seed, map: 'plaza' },
     rng: createRng(seed >>> 0), // only advanced by the world; layout uses layoutRng
     scene,
     get: (id) => services[id],
@@ -43,4 +47,17 @@ export async function buildColliders(seed) {
   const colliders = world.staticColliders;
   world.dispose();
   return colliders;
+}
+
+export async function getMap(name = 'plaza', seed = 0x5eed1234) {
+  if (name === 'arena') {
+    const { ARENA } = await import('./maps/arena.js');
+    return ARENA;
+  }
+  const colliders = await buildColliders(seed, 'plaza');
+  return {
+    id: 'plaza',
+    name: 'Plaza',
+    boxes: colliders,
+  };
 }

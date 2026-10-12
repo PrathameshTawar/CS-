@@ -46,8 +46,10 @@ export class PlayerSystem {
     this._e = new THREE.Euler();
     this._right = new THREE.Vector3();
 
-    // spawn: drop onto the plaza near the fountain
-    this.pos.set(6, 60, 16);
+    // spawn: drop onto the plaza near the fountain or arena ALPHA spawn
+    const sx = ctx.config.map === 'arena' ? 0 : 6;
+    const sz = ctx.config.map === 'arena' ? 29 : 16;
+    this.pos.set(sx, 60, sz);
     this.vy = 0;
     this.eye = EYE_STAND;
     this.camera.position.set(this.pos.x, this.pos.y + this.eye, this.pos.z);
@@ -61,7 +63,7 @@ export class PlayerSystem {
     this.serverAuthority = false;
     this.frozen = false;
     this._deathT = 0;
-    this._respawnAt = new THREE.Vector3(6, 60, 16);
+    this._respawnAt = new THREE.Vector3(sx, 60, sz);
     this._subs = [];
     const e = ctx.events;
     this._subs.push(

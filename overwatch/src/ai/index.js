@@ -45,6 +45,17 @@ const SPAWN_CANDIDATES = [
   { x: 20, z: 0 }, { x: 0, z: -20 }, { x: -20, z: 0 }, { x: 0, z: 20 },
 ];
 
+const ARENA_SPAWNS = [
+  { x: -14, z: -27 }, { x: -6, z: -28 }, { x: 0, z: -28 }, { x: 6, z: -28 }, { x: 14, z: -27 },
+  { x: -14, z: -20 }, { x: 0, z: -18 }, { x: 14, z: -18 },
+];
+
+const ARENA_COVER = [
+  { x: -18, z: -14 }, { x: -10, z: -5 }, { x: -14, z: 0 }, { x: -18, z: 12 },
+  { x: 0, z: -4 }, { x: -4, z: -6 }, { x: 4, z: -6 }, { x: 0, z: 4 },
+  { x: 17, z: -5 }, { x: 10, z: -16 }, { x: 17, z: 5 }, { x: 10, z: 16 },
+];
+
 // Shared rest-pose bone definition (positions are parent-relative).
 const BONE_DEFS = [
   ['hips', [0, 1.0, 0], null],

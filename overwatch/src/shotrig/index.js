@@ -22,6 +22,10 @@ export const SHOT_POSES = {
   alley: { pos: [-30, 1.7, -30], look: [-45, 6, -45], fov: 70 },
   roof: { pos: [0, 34, 30], look: [0, 0, -20], fov: 60 },
   night: { pos: [0, 1.7, 18], look: [0, 2, -12], fov: 70 },
+  // arena poses
+  arena_mid: { pos: [0, 4.5, 20], look: [0, 1.5, 0], fov: 75, map: 'arena' },
+  arena_a: { pos: [-14, 2.0, 18], look: [-14, 1.7, -15], fov: 65, map: 'arena' },
+  arena_b: { pos: [14, 2.0, 18], look: [14, 1.8, 0], fov: 70, map: 'arena' },
 };
 
 export class ShotRigSystem {

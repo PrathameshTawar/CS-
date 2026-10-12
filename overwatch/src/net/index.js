@@ -153,7 +153,7 @@ export class NetSystem {
     }
     this.ws = ws;
     ws.onopen = () => {
-      ws.send(encode({ t: 'hello', v: PROTOCOL_VERSION, name: cfg.playerName, room: cfg.room, mode: cfg.mode }));
+      ws.send(encode({ t: 'hello', v: PROTOCOL_VERSION, name: cfg.playerName, room: cfg.room, mode: cfg.mode, map: cfg.map }));
     };
     ws.onmessage = (e) => this._onMessage(decode(e.data));
     ws.onclose = (e) => {
@@ -180,10 +180,13 @@ export class NetSystem {
   _onMessage(msg) {
     if (!msg) return;
     if (msg.t === 'welcome') {
-      if (msg.seed !== this.ctx.config.seed) {
-        // the server plays a different map: reload on its seed
+      const serverMap = msg.map || 'plaza';
+      const clientMap = this.ctx.config.map || 'plaza';
+      if (serverMap !== clientMap || (serverMap === 'plaza' && msg.seed !== this.ctx.config.seed)) {
+        // the server plays a different map or seed: reload on matching settings
         const url = new URL(location.href);
-        url.searchParams.set('seed', String(msg.seed));
+        url.searchParams.set('map', serverMap);
+        if (serverMap === 'plaza') url.searchParams.set('seed', String(msg.seed));
         location.replace(url.href);
         return;
       }

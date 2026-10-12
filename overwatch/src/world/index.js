@@ -8,6 +8,7 @@
 
 import * as THREE from 'three';
 import { layoutRng } from '../../shared/map.js';
+import { ARENA } from '../../shared/maps/arena.js';
 
 const UP = new THREE.Vector3(0, 1, 0);
 const _m = new THREE.Matrix4();
@@ -35,16 +36,20 @@ export class WorldSystem {
     this._geoms = [];
     this._meshes = [];
 
-    this._buildGround();
-    this._buildSidewalk();
-    this._buildRoads();
-    this._buildCornerBuildings();
-    this._buildShops();
-    this._buildFountain();
-    this._buildProps();
-    this._buildLamps();
-    this._buildCars();
-    this._buildSigns();
+    if (ctx.config.map === 'arena') {
+      this._buildArena();
+    } else {
+      this._buildGround();
+      this._buildSidewalk();
+      this._buildRoads();
+      this._buildCornerBuildings();
+      this._buildShops();
+      this._buildFountain();
+      this._buildProps();
+      this._buildLamps();
+      this._buildCars();
+      this._buildSigns();
+    }
   }
 
   // ---- helpers ----
@@ -620,6 +625,65 @@ export class WorldSystem {
       this._track(sign);
       // sign bracket
       this.box(0.3, 0.3, 1.2, m.make('paintedMetal', { tint: 0x2a2e33 }), s.x + fx * 6.9, 6.6, s.z + fz * 6.9, { surface: 'metal', collide: false });
+    }
+  }
+
+  _buildArena() {
+    const m = this.m;
+    // Ground plane covering arena bounds
+    const ground = new THREE.Mesh(
+      this._geom(new THREE.PlaneGeometry(60, 80)),
+      m.make('asphalt', { repeat: 4, size: 2048 }),
+    );
+    ground.rotation.x = -Math.PI / 2;
+    ground.receiveShadow = true;
+    this.scene.add(ground);
+    this._track(ground);
+
+    // Build meshes for each box in ARENA.boxes
+    for (const b of ARENA.boxes) {
+      this.staticColliders.push(b);
+      if (b.style === 'floor') continue;
+
+      const w = b.max[0] - b.min[0];
+      const h = b.max[1] - b.min[1];
+      const d = b.max[2] - b.min[2];
+      const cx = (b.min[0] + b.max[0]) / 2;
+      const cy = (b.min[1] + b.max[1]) / 2;
+      const cz = (b.min[2] + b.max[2]) / 2;
+
+      let mat;
+      if (b.style === 'crate') {
+        mat = m.make(b.surface || 'paintedWood', { repeat: Math.max(1, Math.round(w / 2)) });
+      } else if (b.style === 'edge') {
+        mat = m.make(b.surface || 'brick', { repeat: 3, size: 1024 });
+      } else if (b.style === 'ledge') {
+        mat = m.make('concrete', { repeat: 1 });
+      } else {
+        mat = m.make(b.surface || 'brick', { repeat: 2 });
+      }
+
+      const mesh = new THREE.Mesh(this._geom(new THREE.BoxGeometry(w, h, d)), mat);
+      mesh.position.set(cx, cy, cz);
+      mesh.castShadow = true;
+      mesh.receiveShadow = true;
+      this.scene.add(mesh);
+      this._track(mesh);
+    }
+
+    // Atmospheric lane point lights
+    const lights = [
+      { x: -14, y: 3.5, z: 0, color: 0xffeedd, intensity: 1.2, dist: 18 },
+      { x: 0, y: 4.0, z: 12, color: 0xffd9aa, intensity: 1.5, dist: 20 },
+      { x: 0, y: 4.0, z: -12, color: 0xffd9aa, intensity: 1.5, dist: 20 },
+      { x: 14, y: 3.2, z: 8, color: 0xffcc88, intensity: 1.4, dist: 14 },
+      { x: 14, y: 3.2, z: -8, color: 0xffcc88, intensity: 1.4, dist: 14 },
+    ];
+    for (const l of lights) {
+      const pl = new THREE.PointLight(l.color, l.intensity, l.dist);
+      pl.position.set(l.x, l.y, l.z);
+      this.scene.add(pl);
+      this._track(pl);
     }
   }
 

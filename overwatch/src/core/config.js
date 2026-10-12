@@ -115,5 +115,7 @@ export function resolveConfig() {
     playerName: url.searchParams.get('name') || 'player',
     // a new room's mode: 'teams' (rounds, default) or 'dm' (free-for-all)
     mode: url.searchParams.get('mode') === 'dm' ? 'dm' : 'teams',
+    // map: 'plaza' (default for single player) or 'arena' (competitive 3-lane)
+    map: (url.searchParams.get('map') || 'plaza').toLowerCase(),
   };
 }

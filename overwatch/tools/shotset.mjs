@@ -49,7 +49,8 @@ const outDir = resolve(ROOT, isBaseline ? 'shots/baseline' : 'shots');
 
 function capture(name) {
   const time = SHOT_TIMES[name] || 'golden';
-  const url = `${BASE_URL}/?shot=${name}&time=${time}&q=${QUALITY}&seed=${SEED}`;
+  const map = SHOT_POSES[name]?.map || 'plaza';
+  const url = `${BASE_URL}/?shot=${name}&time=${time}&q=${QUALITY}&seed=${SEED}&map=${map}`;
   const out = resolve(outDir, `${name}.png`);
   return new Promise((res) => {
     const t0 = Date.now();

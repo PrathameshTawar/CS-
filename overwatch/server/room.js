@@ -118,9 +118,13 @@ const SPAWN_HEIGHT = 60;
 const IDLE = Object.freeze({ forward: 0, right: 0, jump: false, crouch: false, sprint: false, ads: 0 });
 
 export class Room {
-  constructor(name, colliders, { seed, maxPlayers = MAX_PLAYERS_PER_ROOM, mode = MODE_TEAMS, rules = {} } = {}) {
+  constructor(name, colliders, { seed, map = 'plaza', mapData = null, maxPlayers = MAX_PLAYERS_PER_ROOM, mode = MODE_TEAMS, rules = {} } = {}) {
     this.name = name;
     this.seed = seed;
+    this.map = map;
+    this.mapData = mapData;
+    this.teamSpawns = mapData && mapData.spawns ? mapData.spawns : TEAM_SPAWNS;
+    this.spawns = mapData && mapData.spawns ? [...mapData.spawns[0], ...mapData.spawns[1]] : SPAWNS;
     this.maxPlayers = maxPlayers;
     this.mode = mode === MODE_DM ? MODE_DM : MODE_TEAMS;
     this.rules = { ...DEFAULT_RULES, ...rules };
@@ -345,7 +349,7 @@ export class Room {
     g.endsAt = this.tick + this.rules.freezeTicks;
     const used = [0, 0];
     for (const p of this.players.values()) {
-      const spawns = TEAM_SPAWNS[p.team];
+      const spawns = this.teamSpawns[p.team];
       const [x, z] = spawns[used[p.team]++ % spawns.length];
       this._revive(p, x, z);
     }
@@ -485,7 +489,7 @@ export class Room {
   // The spawn (from the player's team side, or anywhere in deathmatch)
   // farthest from every living opponent.
   _spawnPoint(p) {
-    const spawns = p.team >= 0 ? TEAM_SPAWNS[p.team] : SPAWNS;
+    const spawns = p.team >= 0 ? this.teamSpawns[p.team] : this.spawns;
     let best = spawns[0];
     let bestD = -1;
     for (const s of spawns) {

@@ -29,7 +29,8 @@ const HELLO_TIMEOUT_MS = 10000; // generous: a client may hitch while loading
 
 export async function startServer({ port = 8787, host = '0.0.0.0', seed = 0x5eed1234, rules = {}, log = console.log } = {}) {
   seed >>>= 0;
-  const colliders = await buildColliders(seed);
+  const plazaColliders = await buildColliders(seed, 'plaza');
+  const { ARENA } = await import('../shared/maps/arena.js');
   const rooms = new Map();
   const clients = new Set(); // { ws, room, player }
 
@@ -72,8 +73,14 @@ export async function startServer({ port = 8787, host = '0.0.0.0', seed = 0x5eed
         let room = rooms.get(roomName);
         if (!room) {
           if (rooms.size >= MAX_ROOMS) return reject(ws, 'busy', 'server is full');
-          // the hello that creates a room picks its mode
-          room = new Room(roomName, colliders, { seed, mode: msg.mode, rules });
+          // the hello that creates a room picks its mode and map
+          // team rooms default to arena; dm rooms default to plaza (unless requested)
+          const mode = msg.mode === 'dm' ? 'dm' : 'teams';
+          const requestedMap = msg.map ? cleanLabel(msg.map, 'arena', 16) : (mode === 'teams' ? 'arena' : 'plaza');
+          const map = requestedMap === 'plaza' ? 'plaza' : 'arena';
+          const colliders = map === 'arena' ? ARENA.boxes : plazaColliders;
+          const mapData = map === 'arena' ? ARENA : null;
+          room = new Room(roomName, colliders, { seed, map, mapData, mode, rules });
           rooms.set(roomName, room);
         }
         const player = room.join(cleanLabel(msg.name, 'player', 16));
@@ -81,8 +88,8 @@ export async function startServer({ port = 8787, host = '0.0.0.0', seed = 0x5eed
         clearTimeout(helloTimer);
         client.room = room;
         client.player = player;
-        send(ws, { t: 'welcome', id: player.id, seed, room: roomName, tick: room.tick });
-        log(`[join] ${player.name}#${player.id} -> ${roomName} [${room.mode}] (${room.size} players)`);
+        send(ws, { t: 'welcome', id: player.id, seed, map: room.map, room: roomName, tick: room.tick });
+        log(`[join] ${player.name}#${player.id} -> ${roomName} [${room.mode}/${room.map}] (${room.size} players)`);
         return;
       }
 
@@ -125,7 +132,7 @@ export async function startServer({ port = 8787, host = '0.0.0.0', seed = 0x5eed
 
   await new Promise((resolve) => http.listen(port, host, resolve));
   const address = http.address();
-  log(`[server] protocol ${PROTOCOL_VERSION}, seed ${seed}, ${colliders.length} colliders, ws://${host}:${address.port}`);
+  log(`[server] protocol ${PROTOCOL_VERSION}, seed ${seed}, ${plazaColliders.length} colliders, ws://${host}:${address.port}`);
 
   return {
     port: address.port,
