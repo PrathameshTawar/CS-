@@ -1,0 +1,17 @@
+{
+  "name": "overwatch-server",
+  "private": true,
+  "version": "0.1.0",
+  "type": "module",
+  "description": "Authoritative multiplayer server for OVERWATCH. Runs shared/ gameplay in Node.",
+  "main": "index.js",
+  "scripts": {
+    "start": "node index.js"
+  },
+  "dependencies": {
+    "ws": "^8.18.0"
+  },
+  "engines": {
+    "node": ">=18"
+  }
+}

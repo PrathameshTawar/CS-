@@ -260,6 +260,21 @@ export class FxSystem {
   _onImpact(p) {
     const rng = this.rng;
     const n = p.normal;
+    if (p.surface === 'flesh') {
+      // hits on characters: a small blood puff, no sparks, and no decal
+      // (it would hang in the air once the target moves)
+      for (let i = 0; i < 6; i++) {
+        const a = rng.nextFloat() * Math.PI * 2;
+        const sp = 0.6 + rng.nextFloat() * 1.2;
+        this._blood.spawn(
+          p.point.x, p.point.y, p.point.z,
+          Math.cos(a) * sp, 0.3 + rng.nextFloat() * 0.8, Math.sin(a) * sp,
+          0.3 + rng.nextFloat() * 0.3,
+          0.5, 0.04, 0.04, 5,
+        );
+      }
+      return;
+    }
     const count = p.surface === 'metal' ? 16 : p.surface === 'glass' ? 12 : 10;
     // sparks burst
     for (let i = 0; i < count; i++) {

@@ -56,6 +56,8 @@ export class PlayerSystem {
     // 'player'; the damage is applied HERE, by the target's own listener)
     this.health = 100;
     this.dead = false;
+    // online, the server owns health, death and respawn (set by net)
+    this.serverAuthority = false;
     this._deathT = 0;
     this._respawnAt = new THREE.Vector3(6, 60, 16);
     this._subs = [];
@@ -77,6 +79,8 @@ export class PlayerSystem {
   fixedUpdate(h, ctx) {
     // shot mode: the shotrig owns the camera; no physics (capture determinism)
     if (ctx.config.shot) return;
+    // dead online: the server doesn't move us, so neither does prediction
+    if (this.dead && this.serverAuthority) return;
     const inp = ctx.input;
     const mi = this._moveIn;
     mi.forward = (inp.isDown('forward') ? 1 : 0) - (inp.isDown('back') ? 1 : 0);
@@ -130,10 +134,10 @@ export class PlayerSystem {
     // shot mode: camera pose is owned by the shotrig (capture determinism)
     if (ctx.config.shot) return;
 
-    // death / respawn
+    // death / respawn (online, the server respawns us)
     if (this.dead) {
       this._deathT += dt;
-      if (this._deathT > 3) {
+      if (this._deathT > 3 && !this.serverAuthority) {
         this.dead = false;
         this.health = 100;
         this._deathT = 0;
@@ -228,6 +232,10 @@ export class PlayerSystem {
     out.set(this.pos.x, this.pos.y + this.eye, this.pos.z);
     return out;
   }
+
+  // The input the last fixed step moved with (reused object; copy it). The
+  // net system sends it to the server and replays it when reconciling.
+  get lastMoveInput() { return this._moveIn; }
 
   // ---- movement state accessors (state lives in this.move) ----
 

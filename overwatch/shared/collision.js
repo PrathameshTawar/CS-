@@ -22,6 +22,7 @@ export class CollisionWorld {
       normal: { x: 0, y: 0, z: 0 },
       surface: 'concrete',
       distance: 0,
+      box: null, // the box that was hit (dynamic boxes may carry owner data)
     };
     // shared moveCharacter result (reused; no per-frame allocation)
     this._out = { grounded: false, surface: 'concrete' };
@@ -70,6 +71,7 @@ export class CollisionWorld {
     this._faceNormal(bestBox, res.point, res.normal);
     res.surface = bestBox.surface;
     res.distance = best;
+    res.box = bestBox;
     return res;
   }
 

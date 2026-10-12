@@ -117,6 +117,11 @@ export class UiSystem {
       e.on('weapon:fire', () => {
         this._crossKick = 1;
       }),
+      // multiplayer kills (net): every kill in the room, ours highlighted
+      e.on('player:kill', (p) => {
+        const hs = p.headshot ? ' ✛' : '';
+        this._feed(`${p.byMe ? 'YOU' : p.killer} ▸ ${p.onMe ? 'YOU' : p.victim}${hs}`, p.byMe || p.onMe);
+      }),
     );
   }
 

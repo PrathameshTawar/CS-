@@ -108,5 +108,10 @@ export function resolveConfig() {
     mouseSensitivity: Number(url.searchParams.get('sens')) || 0.0022,
     bloomStrength: Number(url.searchParams.get('bloom')) || 1.0,
     debug: url.searchParams.has('debug'),
+    // Multiplayer: `?server=ws://host:8787` joins a server (see server/);
+    // `room` and `name` are optional. Without it the game is single player.
+    server: url.searchParams.get('server') || null,
+    room: url.searchParams.get('room') || 'public',
+    playerName: url.searchParams.get('name') || 'player',
   };
 }

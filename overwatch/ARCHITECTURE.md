@@ -72,6 +72,7 @@ export class MySystem {
 | `ai` | `src/ai/` | enemy characters, navigation, perception, cover selection, combat behaviour |
 | `ui` | `src/ui/` | HUD, crosshair, hitmarkers, damage indicators, ammo, killfeed, menus |
 | `audio` | `src/audio/` | synthesized weapon/foley audio, spatialisation, reverb, occlusion, mix |
+| `net` | `src/net/` | multiplayer client (only with `?server=`): input upload, prediction/reconciliation, remote-player interpolation and stand-in meshes. Replaces `ai` when online |
 
 Shared, owned by the lead (do not edit): `src/core/`, `src/main.js`,
 `src/dev/`, `shared/`, `tests/`, `tools/`, `vite.config.js`.
@@ -84,6 +85,25 @@ Shared, owned by the lead (do not edit): `src/core/`, `src/main.js`,
 | `shared/collision.js` | `CollisionWorld`: slab raycasts, overlap tests, the axis-separated character mover. It resolves overlap after each move instead of sweeping, so per-step deltas must stay small (fixed steps keep them under 10 cm) |
 | `shared/movement.js` | `createMoveState`, `stepMove`: one fixed step of walk/run/crouch/jump |
 | `shared/map.js` | `layoutRng(seed)`, and `buildColliders(seed)`, which runs the world headlessly in Node and returns its static colliders |
+| `shared/protocol.js` | the wire protocol: message shapes, rates, input validation, state packing |
+
+### Multiplayer
+
+`server/` (npm workspace; `npm run server`) is authoritative. `room.js` holds
+the rules without sockets; `index.js` adds HTTP + WebSocket, rooms and the
+120 Hz tick loop.
+
+- Clients send one input per fixed step (batched at 30 Hz); yaw/pitch are the
+  only client-owned values. The server applies at most one input per tick
+  per player (with 250 ms of catch-up credit), so nobody moves faster than
+  real time. No inputs, no movement: a backgrounded tab stands still.
+- Snapshots go out at 20 Hz: the recipient's exact movement state plus the
+  last input seq applied, and every other player rounded to 1 mm.
+- The client predicts with the same `stepMove`, rewinds to each snapshot and
+  replays unacknowledged inputs; with 200 ms RTT the correction is 0 m.
+  Remote players render 100 ms in the past, interpolated between snapshots.
+- The net system connects on its first frame, after boot: shader prewarm can
+  block the page for seconds and would otherwise stall the handshake.
 
 Client and server agree bit-for-bit within one JS runtime. Across runtimes
 (Chromium vs Node) `Math.sin`/`cos` can differ in the last bit, so expect
@@ -103,13 +123,16 @@ Emit and listen via `ctx.events`. Payloads are plain objects. The canonical set:
 | `damage:dealt` | `{ target, amount, headshot, killed, point }` | ai / physics |
 | `damage:taken` | `{ amount, from, health }` | player |
 | `actor:death` | `{ actor, point, impulse }` | ai |
+| `player:kill` | `{ killer, victim, headshot, byMe, onMe }` (names) | net |
 
 `damage:dealt` semantics: `target` is who the damage lands ON. When an enemy
 round connects, `target` is `'player'`; the player system applies it and emits
 `damage:taken`. When a player round hits a soldier, `target` is the soldier
 object — filter `target !== 'player'` before drawing a hitmarker. `killed` is
 true when the damage drops the target to 0; the emitter also fires
-`actor:death` in that case.
+`actor:death` in that case. Online, `net` emits `damage:dealt` with
+`target: { remoteId }` only when the server confirms a hit, `damage:taken`
+when the server lowers our health, and `player:kill` for the kill feed.
 | `player:land` | `{ velocity, surface }` | player |
 | `player:footstep` | `{ position, surface, running }` | player |
 | `player:state` | `{ stance, sprinting, sliding, ads }` | player |

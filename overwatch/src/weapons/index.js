@@ -10,12 +10,17 @@
 // comes from a seeded rng fork — no Math.random.
 
 import * as THREE from 'three';
+import {
+  BODY_DAMAGE,
+  FIRE_INTERVAL,
+  MAG_SIZE,
+  RELOAD_REFILL_AT,
+  RELOAD_TIME,
+  RESERVE,
+  shotEndpoint,
+  traceShot,
+} from '../../shared/combat.js';
 
-const RPM = 720;
-const FIRE_INTERVAL = 60 / RPM;
-const MAG_SIZE = 30;
-const RESERVE = 90;
-const RELOAD_TIME = 2.2;
 const INSPECT_TIME = 1.7;
 
 // viewmodel poses (view space: +X right, +Y up, -Z forward)
@@ -58,10 +63,8 @@ export class WeaponSystem {
     this._origin = new THREE.Vector3();
     this._up = new THREE.Vector3();
     this._right = new THREE.Vector3();
-    this._p0 = new THREE.Vector3();
-    this._p1 = new THREE.Vector3();
-    this._seg = new THREE.Vector3();
     this._tmp = new THREE.Vector3();
+    this._end = { x: 0, y: 0, z: 0 };
     this._e = new THREE.Euler();
 
     this._buildWeapon();
@@ -254,7 +257,7 @@ export class WeaponSystem {
 
     // ballistics: ray with drop, surface-tagged hits
     const hit = this._trace(origin, dir);
-    const end = hit ? hit.point : this._endpoint(origin, dir, 200);
+    const end = hit ? hit.point : shotEndpoint(origin, dir, 200, this._end);
     this.ctx.events.emit('bullet:tracer', { from: origin, to: end, speed: 800 });
     if (hit) {
       this.ctx.events.emit('bullet:impact', {
@@ -262,7 +265,7 @@ export class WeaponSystem {
         normal: hit.normal,
         surface: hit.surface,
         incident: dir,
-        damage: 34,
+        damage: BODY_DAMAGE,
       });
     }
 
@@ -289,38 +292,10 @@ export class WeaponSystem {
     });
   }
 
-  // trace a projectile with gravity drop; returns shared physics hit or null
+  // trace a projectile with gravity drop (shared/combat.js — the server runs
+  // the same trace); returns the shared physics hit or null
   _trace(origin, dir) {
-    const speed = 240; // m/s (game feel; hitscan-ish but with drop)
-    const maxDist = 220;
-    const g = 9.8 * 0.6;
-    const step = 0.5;
-    this._p0.copy(origin);
-    let s = 0;
-    while (s < maxDist) {
-      s = Math.min(s + step, maxDist);
-      const t = s / speed;
-      this._p1.copy(origin).addScaledVector(dir, s);
-      this._p1.y -= 0.5 * g * t * t;
-      this._seg.subVectors(this._p1, this._p0);
-      const len = this._seg.length();
-      if (len < 1e-6) continue;
-      this._seg.divideScalar(len);
-      const hit = this.physics.raycast(this._p0, this._seg, len);
-      if (hit && hit.hit) return hit;
-      this._p0.copy(this._p1);
-      if (this._p1.y < -5) break;
-    }
-    return null;
-  }
-
-  _endpoint(origin, dir, dist) {
-    const t = dist / 240;
-    return {
-      x: origin.x + dir.x * dist,
-      y: origin.y + dir.y * dist - 0.5 * 9.8 * 0.6 * t * t,
-      z: origin.z + dir.z * dist,
-    };
+    return traceShot(this.physics, origin, dir);
   }
 
   // ------------------------------------------------------------------
@@ -346,9 +321,9 @@ export class WeaponSystem {
     this.ads += (this._adsTarget - this.ads) * Math.min(1, dt * 12);
     p.setAds(this.ads);
 
-    // fire (auto)
+    // fire (auto); the dead don't shoot
     this._fireCd -= dt;
-    if (inp.fire && this.ammo > 0 && this._fireCd <= 0 && !this.reloading && this._inspectT < 0) {
+    if (inp.fire && !p.dead && this.ammo > 0 && this._fireCd <= 0 && !this.reloading && this._inspectT < 0) {
       const cam = ctx.camera;
       cam.getWorldDirection(this._dir);
       cam.getWorldPosition(this._origin);
@@ -400,7 +375,7 @@ export class WeaponSystem {
         this._magOut = false;
         this.ctx.events.emit('weapon:reload', { weapon: 'rifle', phase: 'magin' });
       }
-      if (t >= 1.7) {
+      if (t >= RELOAD_REFILL_AT) {
         const take = Math.min(MAG_SIZE - this.ammo, this.reserve);
         this.ammo += take;
         this.reserve -= take;
