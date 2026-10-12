@@ -37,7 +37,7 @@ is not in a standard location) and a running dev server.
   diffs the two runs. It overwrites `shots/baseline/`, so don't commit those
   files after a gate run unless the visual change is intended.
 
-### Multiplayer (early: movement only)
+### Multiplayer (free-for-all deathmatch)
 
 ```bash
 cd overwatch
@@ -48,24 +48,38 @@ npm run dev          # in a second terminal
 
 Open `http://127.0.0.1:5173/?server=ws://localhost:8787&name=alice` in two
 windows (change `name`; add `&room=<name>` for a private room). Each window
-sees the other player as a stand-in figure moving in real time.
+sees the other player as a stand-in figure and can shoot them. The status
+line in the top-left shows the room, player count, ping and your kills and
+deaths.
 
 To play across two PCs on one network, run the server on one of them, start
 the game with `npm run dev -- --host` so other machines can load it, and use
 `?server=ws://<that PC's LAN IP>:8787` on both (allow port 8787 and 5173 in
 the firewall).
 
-Works now: rooms (up to 10 players), server-authoritative movement, client
-prediction with reconciliation, smoothed remote players, the protocol
-version check, and rate and validation limits. AI enemies are switched off
-online. **Not networked yet:** shooting and damage, teams, rounds, and proper
-character models.
+Works now:
+- Rooms of up to 10 players, with movement decided by the server. Your own
+  movement is predicted, so it feels instant, and other players are smoothed.
+- Shooting decided by the server, with lag compensation: a shot hits where
+  you saw the target, up to 400 ms back.
+- Damage: 34 to the body (three hits kill) and 100 for a headshot. You
+  respawn after 3 s at the spawn point farthest from enemies, with a full
+  magazine.
+- The server enforces fire rate, ammo, reloads and where a shot can come
+  from, so a modified client can't fire faster, skip reloads or shoot from
+  somewhere it isn't.
+- Hitmarkers appear only for hits the server confirms. There's a kill feed
+  for every kill in the room, and dead players lie down.
+- AI enemies are switched off online.
+
+**Not networked yet:** teams, rounds and a scoreboard (step 5), proper
+character models, and the sound of other players' gunfire.
 
 `npm test` covers the shared gameplay and the server: rebuilding the
-browser's map from the seed, movement matching a trace recorded from the
-original game bit for bit, client prediction landing exactly on the server's
-state, the anti-speed-hack input limit, and two real WebSocket clients
-seeing each other move.
+browser's map from the seed, movement and bullets matching traces recorded
+from the original game bit for bit, client prediction landing exactly on the
+server's state, the anti-speed-hack limit, all the combat rules including
+lag compensation, and real WebSocket clients moving and fighting.
 
 Known behaviours the multiplayer work still has to account for:
 - Falling is instant: the mover snaps the player onto the highest surface

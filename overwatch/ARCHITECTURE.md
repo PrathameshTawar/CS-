@@ -85,6 +85,7 @@ Shared, owned by the lead (do not edit): `src/core/`, `src/main.js`,
 | `shared/collision.js` | `CollisionWorld`: slab raycasts, overlap tests, the axis-separated character mover. It resolves overlap after each move instead of sweeping, so per-step deltas must stay small (fixed steps keep them under 10 cm) |
 | `shared/movement.js` | `createMoveState`, `stepMove`: one fixed step of walk/run/crouch/jump |
 | `shared/map.js` | `layoutRng(seed)`, and `buildColliders(seed)`, which runs the world headlessly in Node and returns its static colliders |
+| `shared/combat.js` | rifle constants, damage, the bullet trace (`traceShot`) and player hitboxes |
 | `shared/protocol.js` | the wire protocol: message shapes, rates, input validation, state packing |
 
 ### Multiplayer
@@ -104,6 +105,17 @@ the rules without sockets; `index.js` adds HTTP + WebSocket, rooms and the
   Remote players render 100 ms in the past, interpolated between snapshots.
 - The net system connects on its first frame, after boot: shader prewarm can
   block the page for seconds and would otherwise stall the handshake.
+- Shots and reloads ride the input stream, tagged with the input seq they
+  happen before, so the server resolves each one against exactly the state
+  it was fired from. Fire rate, ammo and reloads are timed in the shooter's
+  own input steps. The muzzle must be within 0.75 m of the server's eye
+  position.
+- Lag compensation: the server records every player's hitbox each tick (64
+  ticks kept) and rewinds the other players to the tick the shooter saw,
+  at most 400 ms back.
+- The client's weapon still traces locally for instant tracers and blood:
+  `net` gives remote players client-side `flesh` hitboxes. Damage,
+  hitmarkers, kills and respawns come only from the server.
 
 Client and server agree bit-for-bit within one JS runtime. Across runtimes
 (Chromium vs Node) `Math.sin`/`cos` can differ in the last bit, so expect
