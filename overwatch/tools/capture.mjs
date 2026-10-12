@@ -149,6 +149,8 @@ async function main() {
       '--window-size=1600,900',
       '--force-device-scale-factor=1',
       '--enable-unsafe-swiftshader',
+      // Chrome refuses to start as root (containers, CI) unless sandboxed off.
+      ...(process.getuid && process.getuid() === 0 ? ['--no-sandbox'] : []),
       'about:blank',
     ],
     { stdio: ['ignore', 'ignore', 'pipe'] },

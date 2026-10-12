@@ -74,6 +74,10 @@ export class RenderSystem {
     this.renderer.shadowMap.enabled = true;
     this.renderer.shadowMap.type = THREE.PCFSoftShadowMap;
     this.renderer.setPixelRatio(1);
+    // Every pass clears its own target explicitly. With autoClear on, the
+    // viewmodel overlay (step 5 of _render) wiped the composited world off the
+    // canvas before drawing the weapon, leaving the world black.
+    this.renderer.autoClear = false;
 
     this.anisotropy = Math.min(this.renderer.capabilities.getMaxAnisotropy(), this.q.anisotropic ?? 8);
 
