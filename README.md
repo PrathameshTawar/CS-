@@ -37,7 +37,7 @@ is not in a standard location) and a running dev server.
   diffs the two runs. It overwrites `shots/baseline/`, so don't commit those
   files after a gate run unless the visual change is intended.
 
-### Multiplayer (early: movement only)
+### Multiplayer (early: movement and combat)
 
 ```bash
 cd overwatch
@@ -48,7 +48,7 @@ npm run dev          # in a second terminal
 
 Open `http://127.0.0.1:5173/?server=ws://localhost:8787&name=alice` in two
 windows (change `name`; add `&room=<name>` for a private room). Each window
-sees the other player as a stand-in figure moving in real time.
+sees the other player as a stand-in figure, and you can shoot each other.
 
 To play across two PCs on one network, run the server on one of them, start
 the game with `npm run dev -- --host` so other machines can load it, and use
@@ -57,15 +57,23 @@ the firewall).
 
 Works now: rooms (up to 10 players), server-authoritative movement, client
 prediction with reconciliation, smoothed remote players, the protocol
-version check, and rate and validation limits. AI enemies are switched off
-online. **Not networked yet:** shooting and damage, teams, rounds, and proper
+version check, and rate and validation limits. Combat is server-authoritative
+too: the server resolves every shot with lag compensation (up to 400 ms),
+enforces fire rate, ammo and reloads, and applies damage (34 body, 100 head),
+death and a 3 s respawn, with a kill feed on every client. AI enemies are
+switched off online. **Not networked yet:** teams, rounds, and proper
 character models.
+
+A page served over https (such as the Netlify deploy) can only connect to a
+`wss://` server, so playing online from there needs the server behind TLS.
+Local and LAN play over `ws://` work from `npm run dev`.
 
 `npm test` covers the shared gameplay and the server: rebuilding the
 browser's map from the seed, movement matching a trace recorded from the
 original game bit for bit, client prediction landing exactly on the server's
-state, the anti-speed-hack input limit, and two real WebSocket clients
-seeing each other move.
+state, the anti-speed-hack input limit, the combat rules (fire rate, ammo,
+lag compensation and its cap, spoofed shot origins), and two real WebSocket
+clients seeing each other move and fighting to a kill.
 
 Known behaviours the multiplayer work still has to account for:
 - Falling is instant: the mover snaps the player onto the highest surface
