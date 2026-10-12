@@ -11,11 +11,15 @@ import { Room } from '../server/room.js';
 const colliders = JSON.parse(readFileSync(new URL('./fixtures/plaza-colliders.json', import.meta.url), 'utf8'));
 const IDLE = { forward: 0, right: 0, jump: false, crouch: false, sprint: false, ads: 0 };
 
-// Two players facing each other across the plaza: A at (6, 16), B at (-6, 16).
+// Two deathmatch players (combat rules only; rounds are tested in
+// match.test.js), spawned apart across the plaza.
 function setup() {
-  const room = new Room('t', colliders);
+  const room = new Room('t', colliders, { mode: 'dm' });
   const a = room.join('a');
   const b = room.join('b');
+  // face to face across the plaza: A at (6, 16), B at (-6, 16)
+  room._place(a, 6, 16);
+  room._place(b, -6, 16);
   a.next = 0;
   b.next = 0;
   idle(room, a, 2);

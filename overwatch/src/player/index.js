@@ -56,8 +56,10 @@ export class PlayerSystem {
     // 'player'; the damage is applied HERE, by the target's own listener)
     this.health = 100;
     this.dead = false;
-    // online, the server owns health, death and respawn (set by net)
+    // online, the server owns health, death and respawn (set by net);
+    // `frozen` holds everyone still at a round start
     this.serverAuthority = false;
+    this.frozen = false;
     this._deathT = 0;
     this._respawnAt = new THREE.Vector3(6, 60, 16);
     this._subs = [];
@@ -79,8 +81,8 @@ export class PlayerSystem {
   fixedUpdate(h, ctx) {
     // shot mode: the shotrig owns the camera; no physics (capture determinism)
     if (ctx.config.shot) return;
-    // dead online: the server doesn't move us, so neither does prediction
-    if (this.dead && this.serverAuthority) return;
+    // dead or frozen online: the server doesn't move us, so neither does prediction
+    if ((this.dead || this.frozen) && this.serverAuthority) return;
     const inp = ctx.input;
     const mi = this._moveIn;
     mi.forward = (inp.isDown('forward') ? 1 : 0) - (inp.isDown('back') ? 1 : 0);

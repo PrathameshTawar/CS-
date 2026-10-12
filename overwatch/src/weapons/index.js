@@ -321,9 +321,9 @@ export class WeaponSystem {
     this.ads += (this._adsTarget - this.ads) * Math.min(1, dt * 12);
     p.setAds(this.ads);
 
-    // fire (auto); the dead don't shoot
+    // fire (auto); the dead and the frozen (online round start) don't shoot
     this._fireCd -= dt;
-    if (inp.fire && !p.dead && this.ammo > 0 && this._fireCd <= 0 && !this.reloading && this._inspectT < 0) {
+    if (inp.fire && !p.dead && !p.frozen && this.ammo > 0 && this._fireCd <= 0 && !this.reloading && this._inspectT < 0) {
       const cam = ctx.camera;
       cam.getWorldDirection(this._dir);
       cam.getWorldPosition(this._origin);

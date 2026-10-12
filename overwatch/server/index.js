@@ -27,7 +27,7 @@ const MAX_ROOMS = 64;
 const MAX_MESSAGES_PER_SECOND = 120; // inputs arrive ~30/s; pings ~1/s
 const HELLO_TIMEOUT_MS = 10000; // generous: a client may hitch while loading
 
-export async function startServer({ port = 8787, host = '0.0.0.0', seed = 0x5eed1234, log = console.log } = {}) {
+export async function startServer({ port = 8787, host = '0.0.0.0', seed = 0x5eed1234, rules = {}, log = console.log } = {}) {
   seed >>>= 0;
   const colliders = await buildColliders(seed);
   const rooms = new Map();
@@ -72,7 +72,8 @@ export async function startServer({ port = 8787, host = '0.0.0.0', seed = 0x5eed
         let room = rooms.get(roomName);
         if (!room) {
           if (rooms.size >= MAX_ROOMS) return reject(ws, 'busy', 'server is full');
-          room = new Room(roomName, colliders, { seed });
+          // the hello that creates a room picks its mode
+          room = new Room(roomName, colliders, { seed, mode: msg.mode, rules });
           rooms.set(roomName, room);
         }
         const player = room.join(cleanLabel(msg.name, 'player', 16));
@@ -81,7 +82,7 @@ export async function startServer({ port = 8787, host = '0.0.0.0', seed = 0x5eed
         client.room = room;
         client.player = player;
         send(ws, { t: 'welcome', id: player.id, seed, room: roomName, tick: room.tick });
-        log(`[join] ${player.name}#${player.id} -> ${roomName} (${room.size} players)`);
+        log(`[join] ${player.name}#${player.id} -> ${roomName} [${room.mode}] (${room.size} players)`);
         return;
       }
 
