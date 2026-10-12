@@ -33,7 +33,7 @@
 // - Late joiners sit out (dead) until the next round starts.
 
 import { CollisionWorld } from '../shared/collision.js';
-import { createMoveState, stepMove } from '../shared/movement.js';
+import { KILL_Y, createMoveState, stepMove } from '../shared/movement.js';
 import {
   BODY_DAMAGE,
   FIRE_INTERVAL,
@@ -266,6 +266,10 @@ export class Room {
         p.move.yaw = input.yaw;
         stepMove(p.move, input, H, this.world, this._out);
         p.steps++;
+        if (p.move.pos.y < KILL_Y) {
+          this._kill(p, null, false); // fell off the map
+          continue;
+        }
         if (p.reloadStart >= 0) {
           const t = p.steps - p.reloadStart;
           if (t === REFILL_STEPS) {
@@ -436,13 +440,17 @@ export class Room {
     const damage = headshot ? HEAD_DAMAGE : BODY_DAMAGE;
     target.hp = Math.max(0, target.hp - damage);
     this._emit([EV_HIT, p.id, target.id, damage, headshot ? 1 : 0, r3(hit.point.x), r3(hit.point.y), r3(hit.point.z)]);
-    if (target.hp === 0) {
-      target.dead = true;
-      target.respawnTick = this.respawning ? this.tick + RESPAWN_TICKS : Infinity;
-      target.deaths++;
-      p.kills++;
-      this._emit([EV_KILL, p.id, target.id, headshot ? 1 : 0]);
-    }
+    if (target.hp === 0) this._kill(target, p, headshot);
+  }
+
+  // `killer` null means the world (fell off the map): a death, no kill credit.
+  _kill(target, killer, headshot) {
+    target.hp = 0;
+    target.dead = true;
+    target.respawnTick = this.respawning ? this.tick + RESPAWN_TICKS : Infinity;
+    target.deaths++;
+    if (killer) killer.kills++;
+    this._emit([EV_KILL, killer ? killer.id : 0, target.id, headshot ? 1 : 0]);
   }
 
   // Positions `p.hitbox` where p was at `tick` (interpolated). False if p was

@@ -119,6 +119,10 @@ export class UiSystem {
       }),
       // multiplayer kills (net): every kill in the room, ours highlighted
       e.on('player:kill', (p) => {
+        if (p.killer === null) {
+          this._feed(`${p.onMe ? 'YOU' : p.victim} FELL OFF THE MAP`, p.onMe);
+          return;
+        }
         const hs = p.headshot ? ' ✛' : '';
         this._feed(`${p.byMe ? 'YOU' : p.killer} ▸ ${p.onMe ? 'YOU' : p.victim}${hs}`, p.byMe || p.onMe);
       }),

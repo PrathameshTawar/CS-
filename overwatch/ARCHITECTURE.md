@@ -140,7 +140,7 @@ Emit and listen via `ctx.events`. Payloads are plain objects. The canonical set:
 | `damage:dealt` | `{ target, amount, headshot, killed, point }` | ai / physics |
 | `damage:taken` | `{ amount, from, health }` | player |
 | `actor:death` | `{ actor, point, impulse }` | ai |
-| `player:kill` | `{ killer, victim, headshot, byMe, onMe }` (names) | net |
+| `player:kill` | `{ killer, victim, headshot, byMe, onMe }` (names; `killer: null` = fell off the map) | net, player |
 
 `damage:dealt` semantics: `target` is who the damage lands ON. When an enemy
 round connects, `target` is `'player'`; the player system applies it and emits

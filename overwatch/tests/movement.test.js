@@ -48,7 +48,7 @@ async function runPlayerSystem(boxes) {
   const physics = new PhysicsSystem();
   const ctx = {
     config: { shot: null },
-    input: { isDown: (a) => cur.down.has(a), justPressed: (a) => a === 'jump' && cur.jump },
+    input: { isDown: (a) => cur.down.has(a), stepPressed: (a) => a === 'jump' && cur.jump },
     events: { on: () => () => {}, emit: () => {} },
     camera: new THREE.PerspectiveCamera(),
     rng: createRng(1),

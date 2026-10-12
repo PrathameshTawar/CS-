@@ -1,5 +1,13 @@
-// core/input.js — keyboard + pointer-lock mouse, polled once per frame.
-// `input.beginFrame()` is called by the engine at the top of every frame.
+// core/input.js — keyboard + pointer-lock mouse.
+//
+// Events accumulate between frames and are read during the frame:
+// - per-frame readers (update): isDown, justPressed, firePressed, consumeAim.
+//   The engine calls `endFrame()` once every system has run, which clears
+//   this frame's presses and mouse movement.
+// - fixed-step readers (fixedUpdate): isDown, stepPressed. A frame can run
+//   zero fixed steps (above 120 fps), so step presses are cleared by
+//   `endSteps()` only after a frame that ran at least one step; a press is
+//   never lost between steps.
 
 const KEYMAP = {
   forward: ['KeyW', 'ArrowUp'],
@@ -20,7 +28,8 @@ const KEYMAP = {
 export function createInput(ctx) {
   const keysDown = new Set();
   const actions = new Set();
-  const actionsPressed = new Set();
+  const actionsPressed = new Set(); // since the last endFrame()
+  const stepPressed = new Set(); // since the last endSteps()
   const buttons = { fire: false, ads: false, firePressed: false, adsPressed: false };
   const aim = { dx: 0, dy: 0, sensitivity: 1 };
   const _aimOut = { dx: 0, dy: 0 }; // reused to avoid per-frame allocation
@@ -38,7 +47,10 @@ export function createInput(ctx) {
     if (e.code === 'Escape' || e.code === 'Tab') return;
     const a = actionOf(e.code);
     if (a) {
-      if (!keysDown.has(e.code)) actionsPressed.add(a);
+      if (!keysDown.has(e.code)) {
+        actionsPressed.add(a);
+        stepPressed.add(a);
+      }
       keysDown.add(e.code);
       actions.add(a);
       e.preventDefault();
@@ -110,6 +122,10 @@ export function createInput(ctx) {
     justPressed(name) {
       return actionsPressed.has(name);
     },
+    // for fixedUpdate: pressed since the last frame that ran fixed steps
+    stepPressed(name) {
+      return stepPressed.has(name);
+    },
     firePressed() {
       return buttons.firePressed;
     },
@@ -121,7 +137,12 @@ export function createInput(ctx) {
       _aimOut.dy = aim.dy * aim.sensitivity;
       return _aimOut;
     },
-    beginFrame() {
+    // after a frame that ran at least one fixed step
+    endSteps() {
+      stepPressed.clear();
+    },
+    // after every system has run this frame
+    endFrame() {
       actionsPressed.clear();
       buttons.firePressed = false;
       buttons.adsPressed = false;

@@ -102,7 +102,9 @@ clients moving and fighting.
 Known behaviours the multiplayer work still has to account for:
 - Falling is instant: the mover snaps the player onto the highest surface
   below them, so drops and the 60 m spawn land in one step.
-- The map has no edge walls; walking past ±60 m falls forever.
+- The plaza has no edge walls. Walking or jumping off it is a death (feet
+  below y = -20): no kill credit online, and it counts toward a team
+  elimination. The arena has walls all round.
 - Collision resolves overlap instead of sweeping, so the server must only
   apply small per-step moves. It does: clients send inputs, never positions.
 

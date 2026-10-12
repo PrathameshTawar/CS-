@@ -58,7 +58,7 @@ export const PL_DEAD = 4;
 // combat events in snapshots
 export const EV_SHOT = 1; // [EV_SHOT, shooterId, ox, oy, oz, ex, ey, ez]
 export const EV_HIT = 2; // [EV_HIT, shooterId, targetId, damage, headshot, x, y, z]
-export const EV_KILL = 3; // [EV_KILL, killerId, victimId, headshot]
+export const EV_KILL = 3; // [EV_KILL, killerId (0: fell off the map), victimId, headshot]
 export const EV_SPAWN = 4; // [EV_SPAWN, playerId]
 export const EV_ROUND_END = 5; // [EV_ROUND_END, round, winnerTeam (-1 draw), reason]
 export const EV_MATCH_END = 6; // [EV_MATCH_END, winnerTeam]

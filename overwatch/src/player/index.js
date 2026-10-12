@@ -11,7 +11,7 @@
 // pos + eye (see shared/movement.js).
 
 import * as THREE from 'three';
-import { createMoveState, stepMove, EYE_STAND, SPRINT } from '../../shared/movement.js';
+import { createMoveState, stepMove, EYE_STAND, KILL_Y, SPRINT } from '../../shared/movement.js';
 
 export class PlayerSystem {
   static id = 'player';
@@ -89,12 +89,21 @@ export class PlayerSystem {
     const mi = this._moveIn;
     mi.forward = (inp.isDown('forward') ? 1 : 0) - (inp.isDown('back') ? 1 : 0);
     mi.right = (inp.isDown('right') ? 1 : 0) - (inp.isDown('left') ? 1 : 0);
-    mi.jump = inp.justPressed('jump');
+    mi.jump = inp.stepPressed('jump');
     mi.crouch = inp.isDown('crouch');
     mi.sprint = inp.isDown('sprint');
     mi.ads = this.ads;
     const res = stepMove(this.move, mi, h, this.physics, this._moveOut);
     const hasWish = res.hasWish;
+
+    // off the map: dead (online the server decides and tells us)
+    if (this.pos.y < KILL_Y && !this.dead && !this.serverAuthority) {
+      const amount = this.health;
+      this.health = 0;
+      this.dead = true;
+      ctx.events.emit('damage:taken', { amount, from: null, health: 0 });
+      ctx.events.emit('player:kill', { killer: null, victim: 'YOU', headshot: false, byMe: false, onMe: true });
+    }
 
     if (res.landed) {
       ctx.events.emit('player:land', { velocity: res.impact, surface: this.surface });

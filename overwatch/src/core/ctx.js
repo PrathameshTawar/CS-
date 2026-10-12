@@ -104,11 +104,11 @@ export class Context {
       if (!this._running) return;
       this._raf = requestAnimationFrame(loop);
       const steps = this.time.advance(now);
-      this.input.beginFrame();
       const t = this.time.state;
       for (let i = 0; i < steps; i++) {
         for (const s of this._order) if (s.fixedUpdate) s.fixedUpdate(t.fixed, this);
       }
+      if (steps > 0) this.input.endSteps();
       // update() in dependency order; render goes last so it sees every transform.
       for (const s of this._order) {
         if (s.update && s.constructor.id !== 'render') s.update(t.dt, this);
@@ -116,6 +116,10 @@ export class Context {
       const render = this._systems.get('render');
       if (render && render.update) render.update(t.dt, this);
       for (const s of this._order) if (s.lateUpdate) s.lateUpdate(t.dt, this);
+      // Clear this frame's presses and mouse movement only now that every
+      // system has read them. (Clearing at the top of the frame threw away
+      // everything that arrived between frames: no mouse look, no jump.)
+      this.input.endFrame();
     };
     this._raf = requestAnimationFrame(loop);
     return this;

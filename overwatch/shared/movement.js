@@ -20,6 +20,9 @@ export const HALF = Object.freeze({ x: 0.34, y: 0.9, z: 0.34 });
 export const HALF_Y_CROUCH = 0.55;
 export const STEP_H = 0.45;
 export const MAX_FALL_SPEED = 24;
+// Feet below this are out of the world (walked or jumped off the map): the
+// player dies. Well below every floor; falling there takes about 2 s.
+export const KILL_Y = -20;
 
 // `pos` and `vel` only need x/y/z fields, so the client can pass its
 // THREE.Vector3s and the server plain objects.

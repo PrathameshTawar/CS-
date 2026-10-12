@@ -234,7 +234,7 @@ export class NetSystem {
         const [, killer, victim, headshot] = ev;
         if (killer === me) e.emit('damage:dealt', { target: { remoteId: victim }, amount: 0, headshot: headshot === 1, killed: true, point: null });
         e.emit('player:kill', {
-          killer: this._nameOf(killer),
+          killer: killer === 0 ? null : this._nameOf(killer), // null: fell off the map
           victim: this._nameOf(victim),
           headshot: headshot === 1,
           byMe: killer === me,
