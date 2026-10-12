@@ -15,14 +15,20 @@ meshes, animation and audio are generated procedurally at load time.
 3. **No new npm dependencies.** `three` only. No CDN fetches, no external
    images/HDRIs/models/audio files — the game must run fully offline.
 4. **No `Math.random()` in gameplay or visuals.** Use `ctx.rng` (see
-   `src/core/rng.js`) or a `ctx.rng.fork()` you keep. Capture reproducibility
+   `shared/rng.js`) or a `ctx.rng.fork()` you keep. Capture reproducibility
    depends on it.
 5. **Allocate nothing per-frame.** Preallocate vectors, matrices and arrays in
    `init()` and reuse. A `new THREE.Vector3()` inside `update()` is a bug.
 6. **Dispose what you create.** Geometries, materials, textures and render
    targets get freed in `dispose()`.
-7. `npm run build` must pass and `node tools/capture.mjs` must produce a frame
-   after your change. If you break the boot, nobody else can work.
+7. `npm run build` and `npm test` must pass and `node tools/capture.mjs` must
+   produce a frame after your change. If you break the boot, nobody else can
+   work.
+8. **`shared/` is gameplay the multiplayer server also runs.** Code there is
+   plain JS: no `three`, no DOM, no `ctx`, no randomness, no per-step
+   allocation. A change to it changes the server too — `npm test` pins its
+   behaviour (movement must reproduce `tests/fixtures/movement-trace.json`
+   bit-for-bit; re-record the fixture only for an intended gameplay change).
 
 ## Subsystem interface
 
@@ -58,9 +64,9 @@ export class MySystem {
 | `render` | `src/render/` | WebGLRenderer, HDR pipeline, all post-processing, CSM shadows, the final composite |
 | `materials` | `src/materials/` | procedural PBR texture generation, the shared material library, triplanar/detail mapping |
 | `sky` | `src/sky/` | physical sky, sun/moon, time of day, IBL/env map generation, volumetric fog & light shafts |
-| `world` | `src/world/` | level geometry, the modular building kit, props, set dressing, static collision meshes |
-| `physics` | `src/physics/` | broadphase, raycasts, character controller collision, rigid bodies, ragdolls, penetration |
-| `player` | `src/player/` | movement state machine, camera feel, sprint/slide/mantle/lean, health |
+| `world` | `src/world/` | level geometry, the modular building kit, props, set dressing, static collision meshes. Layout randomness comes from `layoutRng(seed)` (`shared/map.js`) so the server can rebuild the colliders headlessly |
+| `physics` | `src/physics/` | the client's `CollisionWorld` (`shared/collision.js`): raycasts, character controller collision; rigid bodies, ragdolls, penetration |
+| `player` | `src/player/` | camera feel, sprint/slide/mantle/lean, health; the movement step itself is `shared/movement.js` |
 | `weapons` | `src/weapons/` | weapon meshes, viewmodel rig, ADS, recoil, sway, bob, reload & inspect animation, ballistics |
 | `fx` | `src/fx/` | GPU particles, muzzle flash, tracers, impacts, decals, smoke, blood, shells |
 | `ai` | `src/ai/` | enemy characters, navigation, perception, cover selection, combat behaviour |
@@ -68,7 +74,20 @@ export class MySystem {
 | `audio` | `src/audio/` | synthesized weapon/foley audio, spatialisation, reverb, occlusion, mix |
 
 Shared, owned by the lead (do not edit): `src/core/`, `src/main.js`,
-`src/dev/`, `tools/`, `vite.config.js`.
+`src/dev/`, `shared/`, `tests/`, `tools/`, `vite.config.js`.
+
+### `shared/` — client/server gameplay
+
+| module | contents |
+|---|---|
+| `shared/rng.js` | the seeded PRNG (`src/core/rng.js` re-exports it) |
+| `shared/collision.js` | `CollisionWorld`: slab raycasts, overlap tests, the axis-separated character mover. It resolves overlap after each move instead of sweeping, so per-step deltas must stay small (fixed steps keep them under 10 cm) |
+| `shared/movement.js` | `createMoveState`, `stepMove`: one fixed step of walk/run/crouch/jump |
+| `shared/map.js` | `layoutRng(seed)`, and `buildColliders(seed)`, which runs the world headlessly in Node and returns its static colliders |
+
+Client and server agree bit-for-bit within one JS runtime. Across runtimes
+(Chromium vs Node) `Math.sin`/`cos` can differ in the last bit, so expect
+differences around 1e-15 m; server reconciliation absorbs them.
 
 ## Cross-subsystem events
 

@@ -1,26 +1,17 @@
 // player/index.js — the first-person camera and movement state machine.
 //
 // Owns ctx.camera. Movement (walk/run/crouch/jump, air control, auto-step)
-// runs in fixedUpdate at 120 Hz against the physics system; look, bob, recoil
-// decay, FOV and lean run in update(). Emits player:state, player:footstep
-// and player:land so fx/audio can react. Everything is deterministic — no
-// Math.random, no per-frame allocation beyond preallocated scratch vectors.
+// runs in fixedUpdate at 120 Hz through shared/movement.js — the same step
+// the multiplayer server runs; look, bob, recoil decay, FOV and lean run in
+// update(). Emits player:state, player:footstep and player:land so fx/audio
+// can react. Everything is deterministic — no Math.random, no per-frame
+// allocation beyond preallocated scratch vectors.
 //
-// Collision model: this.pos is the FEET position. The AABB center handed to
-// physics is pos + half.y, and the camera sits at pos + eye. That keeps the
-// feet planted on the ground while the box shrinks/grows with crouch.
+// Collision model: this.pos is the FEET position and the camera sits at
+// pos + eye (see shared/movement.js).
 
 import * as THREE from 'three';
-
-const GRAVITY = 19.6;
-const JUMP_VEL = 5.4;
-const WALK = 5.4;
-const SPRINT = 8.6;
-const CROUCH = 2.5;
-const EYE_STAND = 1.7;
-const EYE_CROUCH = 1.2;
-const HALF = { x: 0.34, y: 0.9, z: 0.34 };
-const STEP_H = 0.45;
+import { createMoveState, stepMove, EYE_STAND, SPRINT } from '../../shared/movement.js';
 
 export class PlayerSystem {
   static id = 'player';
@@ -34,17 +25,14 @@ export class PlayerSystem {
 
     this.pos = new THREE.Vector3(); // feet
     this.vel = new THREE.Vector3();
-    this.vy = 0;
-    this.yaw = Math.PI; // face -Z (toward the plaza from z=16)
+    // movement state (vy, yaw, grounded, surface, crouching, sprinting, eye,
+    // half) lives here; the accessors below keep the public fields working.
+    this.move = createMoveState(this.pos, this.vel);
+    this._moveIn = { forward: 0, right: 0, jump: false, crouch: false, sprint: false, ads: 0 };
+    this._moveOut = { hasWish: false, landed: false, impact: 0 };
     this.pitch = 0;
     this.lean = 0;
-    this.grounded = false;
-    this.surface = 'concrete';
-    this.crouching = false;
-    this.sprinting = false;
     this.ads = 0; // 0..1, driven by weapons
-    this.eye = EYE_STAND;
-    this.half = { ...HALF };
     this.lastAim = { dx: 0, dy: 0 };
     this._shake = 0;
     this._recoilPitch = 0;
@@ -53,16 +41,10 @@ export class PlayerSystem {
     this._bobPhase = 0;
     this._stepAcc = 0;
     this._stateT = 0;
-    this._prevCenterY = 0;
 
     // scratch (reused; no per-frame allocation)
     this._e = new THREE.Euler();
-    this._fwd = new THREE.Vector3();
     this._right = new THREE.Vector3();
-    this._wish = new THREE.Vector3();
-    this._delta = { x: 0, y: 0, z: 0 };
-    this._center = { x: 0, y: 0, z: 0 };
-    this._probe = { x: 0, y: 0, z: 0 };
 
     // spawn: drop onto the plaza near the fountain
     this.pos.set(6, 60, 16);
@@ -96,67 +78,20 @@ export class PlayerSystem {
     // shot mode: the shotrig owns the camera; no physics (capture determinism)
     if (ctx.config.shot) return;
     const inp = ctx.input;
-    // wish direction from keys, relative to yaw
-    const f = (inp.isDown('forward') ? 1 : 0) - (inp.isDown('back') ? 1 : 0);
-    const r = (inp.isDown('right') ? 1 : 0) - (inp.isDown('left') ? 1 : 0);
-    const sinY = Math.sin(this.yaw);
-    const cosY = Math.cos(this.yaw);
-    this._fwd.set(-sinY, 0, -cosY);
-    this._right.set(cosY, 0, -sinY);
-    this._wish.set(0, 0, 0)
-      .addScaledVector(this._fwd, f)
-      .addScaledVector(this._right, r);
-    const hasWish = this._wish.lengthSq() > 0;
-    if (hasWish) this._wish.normalize();
+    const mi = this._moveIn;
+    mi.forward = (inp.isDown('forward') ? 1 : 0) - (inp.isDown('back') ? 1 : 0);
+    mi.right = (inp.isDown('right') ? 1 : 0) - (inp.isDown('left') ? 1 : 0);
+    mi.jump = inp.justPressed('jump');
+    mi.crouch = inp.isDown('crouch');
+    mi.sprint = inp.isDown('sprint');
+    mi.ads = this.ads;
+    const res = stepMove(this.move, mi, h, this.physics, this._moveOut);
+    const hasWish = res.hasWish;
 
-    this.crouching = inp.isDown('crouch') || (this.crouching && !this._hasHeadroom());
-    const wantSprint = inp.isDown('sprint') && f > 0 && !this.crouching && this.ads < 0.3;
-    this.sprinting = wantSprint;
-    const speed = this.crouching ? CROUCH : this.sprinting ? SPRINT : WALK;
-
-    // horizontal accel (snappier on ground, loose in air)
-    const accel = this.grounded ? (hasWish ? 14 : 10) : 1.5;
-    const k = Math.min(1, h * accel);
-    this.vel.x += (this._wish.x * speed - this.vel.x) * k;
-    this.vel.z += (this._wish.z * speed - this.vel.z) * k;
-
-    // jump
-    if (inp.justPressed('jump') && this.grounded) {
-      this.vy = JUMP_VEL;
-      this.grounded = false;
+    if (res.landed) {
+      ctx.events.emit('player:land', { velocity: res.impact, surface: this.surface });
+      this.addShake(Math.min(0.6, res.impact * 0.05));
     }
-    if (!this.grounded) {
-      this.vy -= GRAVITY * h;
-      this.vy = Math.max(this.vy, -24);
-    }
-
-    // integrate through physics (physics works on the box CENTER)
-    this._delta.x = this.vel.x * h;
-    this._delta.y = this.vy * h;
-    this._delta.z = this.vel.z * h;
-    this._center.x = this.pos.x;
-    this._center.y = this.pos.y + this.half.y;
-    this._center.z = this.pos.z;
-    const res = this.physics.moveCharacter(this._center, this.half, this._delta, STEP_H);
-    this.pos.x = this._center.x;
-    this.pos.y = this._center.y - this.half.y; // feet = center - half.y
-    this.pos.z = this._center.z;
-
-    const wasGrounded = this.grounded;
-    this.grounded = res.grounded;
-    this.surface = res.surface;
-    if (this.grounded) {
-      if (!wasGrounded && this.vy < -4) {
-        // landed
-        const impact = -this.vy;
-        ctx.events.emit('player:land', { velocity: impact, surface: this.surface });
-        this.addShake(Math.min(0.6, impact * 0.05));
-      }
-      this.vy = 0;
-    } else if (this.vy > 0 && this._center.y < this._prevCenterY - 0.001) {
-      this.vy = 0; // head bump
-    }
-    this._prevCenterY = this._center.y;
 
     // footsteps (distance-based)
     if (this.grounded && hasWish) {
@@ -174,12 +109,6 @@ export class PlayerSystem {
     } else {
       this._stepAcc = 0;
     }
-
-    // eye height (smooth crouch; box shrinks from the top so feet stay put)
-    const targetEye = this.crouching ? EYE_CROUCH : EYE_STAND;
-    this.eye += (targetEye - this.eye) * Math.min(1, h * 12);
-    const targetHalfY = this.crouching ? 0.55 : HALF.y;
-    this.half.y += (targetHalfY - this.half.y) * Math.min(1, h * 12);
 
     // camera follows the body (bob applied in update)
     this.camera.position.set(this.pos.x, this.pos.y + this.eye, this.pos.z);
@@ -300,13 +229,19 @@ export class PlayerSystem {
     return out;
   }
 
-  _hasHeadroom() {
-    // test the standing box at the feet position
-    this._probe.x = this.pos.x;
-    this._probe.y = this.pos.y + HALF.y;
-    this._probe.z = this.pos.z;
-    return !this.physics.overlaps(this._probe, HALF);
-  }
+  // ---- movement state accessors (state lives in this.move) ----
+
+  get vy() { return this.move.vy; }
+  set vy(v) { this.move.vy = v; }
+  get yaw() { return this.move.yaw; }
+  set yaw(v) { this.move.yaw = v; }
+  get grounded() { return this.move.grounded; }
+  get surface() { return this.move.surface; }
+  get crouching() { return this.move.crouching; }
+  get sprinting() { return this.move.sprinting; }
+  get eye() { return this.move.eye; }
+  set eye(v) { this.move.eye = v; }
+  get half() { return this.move.half; }
 
   dispose() {
     for (const off of this._subs) off();

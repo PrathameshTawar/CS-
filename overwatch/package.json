@@ -8,6 +8,7 @@
     "dev": "vite",
     "build": "vite build",
     "preview": "vite preview",
+    "test": "node --test",
     "capture": "node tools/capture.mjs",
     "shotset": "node tools/shotset.mjs",
     "baseline": "node tools/shotset.mjs --baseline",
@@ -19,5 +20,8 @@
   },
   "devDependencies": {
     "vite": "^6.3.5"
+  },
+  "engines": {
+    "node": ">=18"
   }
 }

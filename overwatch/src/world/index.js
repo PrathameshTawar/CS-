@@ -2,11 +2,12 @@
 //
 // A ~120x120 m market street: ground, plaza paving, roads, modular buildings
 // with real wall thickness and enterable storefronts, and several hundred
-// instanced props. Every transform comes from ctx.rng.fork('world') so the
+// instanced props. Every transform comes from layoutRng(seed) (shared/map.js) so the
 // scene is identical for a given seed. Static colliders are exposed for the
 // physics system to consume later.
 
 import * as THREE from 'three';
+import { layoutRng } from '../../shared/map.js';
 
 const UP = new THREE.Vector3(0, 1, 0);
 const _m = new THREE.Matrix4();
@@ -21,7 +22,11 @@ export class WorldSystem {
 
   init(ctx) {
     this.ctx = ctx;
-    this.rng = ctx.rng.fork(0x70a1d);
+    // Layout comes from the seed alone so the server can rebuild the same map
+    // (shared/map.js). ctx.rng is still advanced exactly as before so every
+    // later subsystem's stream (fx, player, weapons, ai) is unchanged.
+    this.rng = layoutRng(ctx.config.seed);
+    ctx.rng.fork(0x70a1d);
     const m = ctx.get('materials');
     this.m = m;
     this.scene = ctx.scene;
