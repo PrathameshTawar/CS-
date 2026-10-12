@@ -37,16 +37,42 @@ is not in a standard location) and a running dev server.
   diffs the two runs. It overwrites `shots/baseline/`, so don't commit those
   files after a gate run unless the visual change is intended.
 
-**Multiplayer groundwork.** Gameplay the server will also run lives in
-`overwatch/shared/` (collision, movement, map colliders, PRNG). `npm test`
-proves the server can rebuild the browser's map from the seed alone and that
-movement reproduces a trace recorded from the original game bit-for-bit.
-Known behaviours the multiplayer work has to account for:
+### Multiplayer (early: movement only)
+
+```bash
+cd overwatch
+npm install          # also installs the server workspace (ws)
+npm run server       # ws://localhost:8787 (PORT, HOST, SEED env vars)
+npm run dev          # in a second terminal
+```
+
+Open `http://127.0.0.1:5173/?server=ws://localhost:8787&name=alice` in two
+windows (change `name`; add `&room=<name>` for a private room). Each window
+sees the other player as a stand-in figure moving in real time.
+
+To play across two PCs on one network, run the server on one of them, start
+the game with `npm run dev -- --host` so other machines can load it, and use
+`?server=ws://<that PC's LAN IP>:8787` on both (allow port 8787 and 5173 in
+the firewall).
+
+Works now: rooms (up to 10 players), server-authoritative movement, client
+prediction with reconciliation, smoothed remote players, the protocol
+version check, and rate and validation limits. AI enemies are switched off
+online. **Not networked yet:** shooting and damage, teams, rounds, and proper
+character models.
+
+`npm test` covers the shared gameplay and the server: rebuilding the
+browser's map from the seed, movement matching a trace recorded from the
+original game bit for bit, client prediction landing exactly on the server's
+state, the anti-speed-hack input limit, and two real WebSocket clients
+seeing each other move.
+
+Known behaviours the multiplayer work still has to account for:
 - Falling is instant: the mover snaps the player onto the highest surface
   below them, so drops and the 60 m spawn land in one step.
 - The map has no edge walls; walking past ±60 m falls forever.
 - Collision resolves overlap instead of sweeping, so the server must only
-  apply small per-step moves (it can't trust client-sized deltas).
+  apply small per-step moves. It does: clients send inputs, never positions.
 
 ## STRIDE OPS
 
@@ -66,8 +92,9 @@ design docs in [`stride-ops/docs/`](stride-ops/docs/).
 ## Repository layout
 
 ```
-overwatch/     Vite + JS game: src/, shared/ (client+server gameplay), tests/,
-               tools/ (capture, imagediff), shots/baseline/
+overwatch/     Vite + JS game: src/, shared/ (client+server gameplay), server/
+               (multiplayer server), tests/, tools/ (capture, imagediff),
+               shots/baseline/
 stride-ops/    TypeScript engine: src/, tests/, demo/, docs/, webpack + jest config
 netlify.toml   deploys overwatch/ (stride-ops/netlify.toml deploys the other)
 ```

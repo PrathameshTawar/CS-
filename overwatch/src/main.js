@@ -21,6 +21,7 @@ import { AudioSystem } from './audio/index.js';
 import { UiSystem } from './ui/index.js';
 import { DevSystem } from './dev/index.js';
 import { ShotRigSystem } from './shotrig/index.js';
+import { NetSystem } from './net/index.js';
 
 const barEl = document.getElementById('bootbar');
 function progress(p) {
@@ -34,6 +35,7 @@ async function boot() {
     window.__owPhase = 'boot';
     progress(8);
     const ctx = new Context(document.getElementById('game'), config);
+    const online = Boolean(config.server) && !config.shot;
     ctx.register(
       new RenderSystem(),
       new MaterialsSystem(),
@@ -43,13 +45,16 @@ async function boot() {
       new FxSystem(),
       new PlayerSystem(),
       new WeaponSystem(),
-      new AiSystem(),
+      // multiplayer replaces the AI squad (their damage is client-side only)
+      ...(online ? [] : [new AiSystem()]),
       new AudioSystem(),
       new UiSystem(),
       new DevSystem(),
     );
     // deterministic capture rig — only active when ?shot=<name> is present
     if (config.shot) ctx.register(new ShotRigSystem());
+    // multiplayer client — only when ?server=<ws url> is present
+    if (online) ctx.register(new NetSystem());
     progress(18);
     await ctx.boot();
     window.__owPhase = 'prewarm';

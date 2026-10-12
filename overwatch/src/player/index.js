@@ -229,6 +229,10 @@ export class PlayerSystem {
     return out;
   }
 
+  // The input the last fixed step moved with (reused object; copy it). The
+  // net system sends it to the server and replays it when reconciling.
+  get lastMoveInput() { return this._moveIn; }
+
   // ---- movement state accessors (state lives in this.move) ----
 
   get vy() { return this.move.vy; }
