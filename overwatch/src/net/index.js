@@ -21,7 +21,8 @@
 //   round timer, banners and a scoreboard (hold Tab).
 
 import * as THREE from 'three';
-import { MAG_SIZE, RESERVE, playerHitbox } from '../../shared/combat.js';
+import { FIRE_INTERVAL, MAG_SIZE, RESERVE, playerHitbox } from '../../shared/combat.js';
+import { createSoldier, disposeSoldier, poseSoldier } from '../characters/soldier.js';
 import { HALF, HALF_Y_CROUCH, stepMove } from '../../shared/movement.js';
 import {
   END_ELIMINATION,
@@ -39,6 +40,7 @@ import {
   PHASE_WARMUP,
   PL_CROUCH,
   PL_DEAD,
+  PL_GROUNDED,
   TEAM_NAMES,
   PROTOCOL_VERSION,
   TICK_RATE,
@@ -53,12 +55,14 @@ const INTERP_TICKS = 12; // 100 ms: two snapshot intervals of cushion
 const PENDING_MAX = 256; // ~2 s of unacknowledged inputs at 120 Hz
 const PING_EVERY = 1; // seconds
 const TELEPORT = 4; // m between snapshots: a respawn, don't slide across the map
-const TEAM_COLORS = [0xd9663a, 0x3a7bd9]; // ALPHA orange, BRAVO blue
+const TEAM_UNIFORMS = [0xb0552e, 0x2f5fb0]; // ALPHA orange, BRAVO blue (fabric tint)
+const STEP_WALK = 2.2; // m between footsteps (matches the local player)
+const STEP_RUN = 3.4;
 const TEAM_CSS = ['#ff9a6a', '#7fb4ff'];
 
 export class NetSystem {
   static id = 'net';
-  static deps = ['player', 'physics', 'render', 'weapons'];
+  static deps = ['player', 'physics', 'render', 'weapons', 'materials'];
 
   init(ctx) {
     this.ctx = ctx;
@@ -97,11 +101,12 @@ export class NetSystem {
     this._names = new Map();
     this._out = { hasWish: false, landed: false, impact: 0 };
 
-    // remote players
+    // remote players: the same soldier model as the AI, uniformed by team
     this._remotes = new Map();
-    this._bodyGeo = new THREE.BoxGeometry(0.68, 1, 0.68);
-    this._bodyGeo.translate(0, 0.5, 0); // origin at the feet
-    this._headGeo = new THREE.SphereGeometry(0.14, 12, 8);
+    this.materials = ctx.get('materials');
+    this._uniforms = new Map(); // tint -> [uniform, skin, gear] (materials are cached and shared)
+    this._shotSounds = []; // { at, origin }: remote gunfire, spaced at the fire rate
+    this._nextShotAt = new Map();
 
     this._hud = document.createElement('div');
     this._hud.style.cssText =
@@ -230,6 +235,12 @@ export class NetSystem {
       if (type === EV_SHOT) {
         // someone else fired: tracer from their muzzle (ours were drawn locally)
         e.emit('bullet:tracer', { from: { x: ev[2], y: ev[3], z: ev[4] }, to: { x: ev[5], y: ev[6], z: ev[7] }, speed: 800 });
+        // the shot's sound; a burst arriving in one snapshot is spread back
+        // out at the rifle's fire rate instead of playing as one bang
+        const now = this.ctx.time.state.raw;
+        const at = Math.max(now, this._nextShotAt.get(ev[1]) || 0);
+        this._nextShotAt.set(ev[1], at + FIRE_INTERVAL);
+        this._shotSounds.push({ at, origin: { x: ev[2], y: ev[3], z: ev[4] } });
       } else if (type === EV_HIT) {
         const [, shooter, target, amount, headshot, x, y, z] = ev;
         const point = { x, y, z };
@@ -353,12 +364,19 @@ export class NetSystem {
       // which would round round-trip times down to whole frames
       this.ws.send(encode({ t: 'ping', c: performance.now() }));
     }
-    this._interpolate(ctx);
+    this._interpolate(ctx, dt);
+    for (let i = this._shotSounds.length - 1; i >= 0; i--) {
+      const s = this._shotSounds[i];
+      if (s.at <= ctx.time.state.raw) {
+        ctx.events.emit('actor:fire', { origin: s.origin });
+        this._shotSounds.splice(i, 1);
+      }
+    }
     this._drawHud();
     this._drawMatch(ctx);
   }
 
-  _interpolate(ctx) {
+  _interpolate(ctx, dt) {
     const buf = this._buffer;
     if (!buf.length) return;
     const renderTick = ctx.time.state.raw * TICK_RATE + this._tickOffset - INTERP_TICKS;
@@ -375,7 +393,7 @@ export class NetSystem {
     for (const row of from.players) {
       const id = row[0];
       seen.add(id);
-      let x = row[1], y = row[2], z = row[3], yaw = row[4], flags = row[6];
+      let x = row[1], y = row[2], z = row[3], yaw = row[4], pitch = row[5], flags = row[6];
       if (b) {
         const next = b.players.find((r) => r[0] === id);
         if (next) {
@@ -386,6 +404,7 @@ export class NetSystem {
               y = next[2];
               z = next[3];
               yaw = next[4];
+              pitch = next[5];
               flags = next[6];
             }
           } else {
@@ -393,41 +412,81 @@ export class NetSystem {
             y += (next[2] - y) * t;
             z += (next[3] - z) * t;
             yaw += angleDelta(yaw, next[4]) * t;
+            pitch += (next[5] - pitch) * t;
             if (t >= 0.5) flags = next[6];
           }
         }
       }
-      this._placeRemote(id, row[7], x, y, z, yaw, (flags & PL_CROUCH) !== 0, (flags & PL_DEAD) !== 0, row[10]);
+      this._placeRemote(id, row[7], x, y, z, yaw, pitch, flags, row[10], dt);
     }
     for (const id of [...this._remotes.keys()]) {
       if (!seen.has(id)) this._removeRemote(id);
     }
   }
 
-  _placeRemote(id, name, x, y, z, yaw, crouching, dead, team) {
+  _uniform(tint) {
+    let mats = this._uniforms.get(tint);
+    if (!mats) {
+      const m = this.materials;
+      mats = [
+        m.make('fabric', { tint, variant: 1, repeat: 1, size: 512 }),
+        m.make('fabric', { tint: 0xd9a97c, variant: 2, repeat: 1, size: 512 }),
+        m.make('paintedMetal', { tint: 0x2c2f33, variant: 2, repeat: 1, size: 512 }),
+      ];
+      this._uniforms.set(tint, mats);
+    }
+    return mats;
+  }
+
+  _placeRemote(id, name, x, y, z, yaw, pitch, flags, team, dt) {
+    const crouching = (flags & PL_CROUCH) !== 0;
+    const dead = (flags & PL_DEAD) !== 0;
     let r = this._remotes.get(id);
     if (!r) {
-      // team colour, or a distinct hue per player in deathmatch
-      const color = team >= 0 ? new THREE.Color(TEAM_COLORS[team]) : new THREE.Color().setHSL((id * 0.618) % 1, 0.55, 0.5);
-      const material = new THREE.MeshStandardMaterial({ color, roughness: 0.7 });
-      const body = new THREE.Mesh(this._bodyGeo, material);
-      const head = new THREE.Mesh(this._headGeo, material);
-      body.castShadow = head.castShadow = true;
-      const group = new THREE.Group();
-      group.add(body, head);
+      // team uniform, or a distinct colour per player in deathmatch
+      const tint = team >= 0 ? TEAM_UNIFORMS[team] : new THREE.Color().setHSL((id * 0.618) % 1, 0.5, 0.4).getHex();
+      const soldier = createSoldier(this._uniform(tint));
+      const group = new THREE.Group(); // carries position + facing
+      group.add(soldier.root);
       group.name = `remote:${name}#${id}`;
       this.ctx.scene.add(group);
       // client-side hitbox: our local trace hits it for instant blood
       const box = { min: [0, 0, 0], max: [0, 0, 0], surface: 'flesh', remoteId: id };
       this.physics.addDynamic(box);
-      r = { group, body, head, material, box, boxed: true };
+      r = { group, soldier, box, boxed: true, phase: (id * 1.7) % 6.28, crouch: 0, deadT: 0, lastX: x, lastZ: z, stepAcc: 0 };
       this._remotes.set(id, r);
     }
-    const height = crouching ? 1.1 : 1.8;
-    r.body.scale.y = height - 0.25;
-    r.head.position.y = height - 0.12;
-    r.group.position.set(x, dead ? y + 0.34 : y, z);
-    r.group.rotation.set(0, yaw, dead ? Math.PI / 2 : 0, 'YXZ'); // the dead lie down
+
+    // movement from the interpolated positions: drives the walk cycle and steps
+    const moved = Math.hypot(x - r.lastX, z - r.lastZ);
+    r.lastX = x;
+    r.lastZ = z;
+    const speed = dt > 0 && moved < TELEPORT ? moved / dt : 0;
+    const moving = speed > 0.5 && !dead;
+    r.phase += dt * (moving ? 9 * THREE.MathUtils.clamp(speed / 3.2, 0.8, 1.8) : 2.2);
+    r.crouch += ((crouching ? 1 : 0) - r.crouch) * Math.min(1, dt * 12);
+    if (moving && (flags & PL_GROUNDED) !== 0) {
+      r.stepAcc += moved;
+      const running = speed > 6.5;
+      if (r.stepAcc >= (running ? STEP_RUN : STEP_WALK)) {
+        r.stepAcc = 0;
+        this.ctx.events.emit('actor:footstep', { position: { x, y, z }, running });
+      }
+    }
+
+    // the model faces +Z; a player looks along -Z at yaw 0
+    r.group.position.set(x, y, z);
+    r.group.rotation.set(0, yaw + Math.PI, 0);
+    if (dead) {
+      // fall over like the AI soldiers do
+      r.deadT = Math.min(1, r.deadT + dt / 0.45);
+      r.group.rotation.x = -r.deadT * Math.PI / 2;
+      r.group.position.y = y - r.deadT * 0.85;
+    } else {
+      r.deadT = 0;
+      poseSoldier(r.soldier.bones, r.phase, moving, true, r.crouch, pitch);
+    }
+
     // hitboxes for living enemies only: teammates can't be shot
     const enemy = team < 0 || team !== this.team;
     if ((dead || !enemy) && r.boxed) {
@@ -446,7 +505,7 @@ export class NetSystem {
     const r = this._remotes.get(id);
     if (!r) return;
     this.ctx.scene.remove(r.group);
-    r.material.dispose();
+    disposeSoldier(r.soldier); // materials are shared and owned by the materials system
     if (r.boxed) this.physics.removeDynamic(r.box);
     this._remotes.delete(id);
   }
@@ -532,8 +591,6 @@ export class NetSystem {
     this._board.remove();
     if (this.ws) this.ws.close();
     this._clearRemotes();
-    this._bodyGeo.dispose();
-    this._headGeo.dispose();
     this._hud.remove();
   }
 }

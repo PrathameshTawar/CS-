@@ -75,7 +75,11 @@ export class MySystem {
 | `net` | `src/net/` | multiplayer client (only with `?server=`): input upload, prediction/reconciliation, remote-player interpolation and stand-in meshes. Replaces `ai` when online |
 
 Shared, owned by the lead (do not edit): `src/core/`, `src/main.js`,
-`src/dev/`, `shared/`, `tests/`, `tools/`, `vite.config.js`.
+`src/dev/`, `src/characters/`, `shared/`, `tests/`, `tools/`, `vite.config.js`.
+
+`src/characters/soldier.js` is the procedural soldier (skinned boxes on a
+skeleton, walk/aim/crouch pose) used by both `ai` and `net`; plain
+functions, not a subsystem.
 
 ### `shared/` — client/server gameplay
 
@@ -140,6 +144,8 @@ Emit and listen via `ctx.events`. Payloads are plain objects. The canonical set:
 | `damage:dealt` | `{ target, amount, headshot, killed, point }` | ai / physics |
 | `damage:taken` | `{ amount, from, health }` | player |
 | `actor:death` | `{ actor, point, impulse }` | ai |
+| `actor:fire` | `{ origin }` — another shooter fired (AI soldier, remote player) | ai, net |
+| `actor:footstep` | `{ position, running }` — another character's step | net |
 | `player:kill` | `{ killer, victim, headshot, byMe, onMe }` (names; `killer: null` = fell off the map) | net, player |
 
 `damage:dealt` semantics: `target` is who the damage lands ON. When an enemy

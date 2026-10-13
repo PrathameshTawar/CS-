@@ -84,9 +84,11 @@ Works now:
   for every kill in the room, and dead players lie down.
 - AI enemies are switched off online.
 
-**Not yet:** a map built for competitive play (every spawn can currently
-see every enemy spawn), a bomb objective, proper character models, and the
-sound of other players' gunfire.
+- Other players are full soldier models in their team colour (or their own
+  colour in deathmatch). They walk, crouch, aim up and down, and fall when
+  killed, and you hear their gunfire and footsteps from where they are.
+
+**Not yet:** a bomb objective.
 
 A page served over https (such as the Netlify deploy) can only connect to a
 `wss://` server, so playing online from there needs the server behind TLS.
