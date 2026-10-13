@@ -161,6 +161,16 @@ export class NetSystem {
     };
   }
 
+  // Leave the match on purpose (the ESC menu's EXIT MATCH): close the socket
+  // without reporting an error.
+  close() {
+    if (this.ws) {
+      this.status = 'left';
+      this.ws.onclose = null;
+      this.ws.close(1000, 'left');
+    }
+  }
+
   _fail(reason) {
     this.status = 'error';
     this.error = reason;

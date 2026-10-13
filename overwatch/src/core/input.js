@@ -43,8 +43,15 @@ export function createInput(ctx) {
     return null;
   };
 
+  // Typing into a text field (menu name, server address) is not gameplay:
+  // don't treat it as actions and don't swallow the keystroke.
+  const typing = (e) => {
+    const t = e.target;
+    return !!t && (t.tagName === 'INPUT' || t.tagName === 'TEXTAREA' || t.isContentEditable === true);
+  };
+
   const onKeyDown = (e) => {
-    if (e.code === 'Escape' || e.code === 'Tab') return;
+    if (e.code === 'Escape' || e.code === 'Tab' || typing(e)) return;
     const a = actionOf(e.code);
     if (a) {
       if (!keysDown.has(e.code)) {
@@ -69,7 +76,9 @@ export function createInput(ctx) {
   };
   const onMouseDown = (e) => {
     if (!locked) {
-      lock(); // the engage click must not also fire a shot
+      // Only a click on the game view engages (it must not also fire a shot).
+      // Clicks on menus and their fields must not capture the mouse.
+      if (e.target === canvas) lock();
       return;
     }
     if (e.button === 0) {
