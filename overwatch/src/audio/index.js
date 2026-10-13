@@ -69,6 +69,9 @@ export class AudioSystem {
       e.on('bullet:impact', (p) => this.impact(p.surface, p.point)),
       e.on('bullet:tracer', (p) => this.tracer(p.from, p.to)),
       e.on('player:footstep', (p) => this.footstep(p.running, p.position)),
+      // other shooters (AI soldiers, remote players): positioned gunfire/steps
+      e.on('actor:fire', (p) => this.gunshot(p.origin)),
+      e.on('actor:footstep', (p) => this.footstep(p.running, p.position)),
       e.on('player:land', (p) => this.land(p.velocity)),
       e.on('damage:taken', () => this.hurt()),
       e.on('actor:death', (p) => this.death(p.point)),
