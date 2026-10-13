@@ -17,9 +17,13 @@ beforeEach(() => {
     },
   };
 });
-const fire = (type, props) => document.dispatchEvent(Object.assign(new Event(type), props));
+const fire = (type, props, target = null) => {
+  const ev = Object.assign(new Event(type), props);
+  if (target) Object.defineProperty(ev, 'target', { value: target }); // clicked element
+  return document.dispatchEvent(ev);
+};
 const key = (type, code) => fire(type, { code });
-const lock = () => fire('mousedown', { button: 0 }); // the engage click locks, it doesn't shoot
+const lock = () => fire('mousedown', { button: 0 }, canvas); // the engage click locks, it doesn't shoot
 
 test('presses: per-frame readers until endFrame, fixed-step readers until endSteps', async () => {
   const { createInput } = await import('../src/core/input.js');
@@ -35,6 +39,31 @@ test('presses: per-frame readers until endFrame, fixed-step readers until endSte
   assert.equal(input.stepPressed('jump'), false);
   key('keydown', 'Space'); // key repeat while held is not a new press
   assert.equal(input.justPressed('jump'), false);
+});
+
+test('only a click on the game view captures the mouse (not menus or their fields)', async () => {
+  const { createInput } = await import('../src/core/input.js');
+  const input = createInput({ canvas });
+  fire('mousedown', { button: 0 }, { tagName: 'INPUT' }); // e.g. the server address field
+  assert.equal(input.locked, false);
+  assert.equal(input.fire, false, 'and it is not a shot');
+  lock();
+  assert.equal(input.locked, true);
+  assert.equal(input.fire, false, 'the engage click is not a shot either');
+});
+
+test('typing in a text field is not gameplay and is not swallowed', async () => {
+  const { createInput } = await import('../src/core/input.js');
+  const input = createInput({ canvas });
+  const ev = Object.assign(new Event('keydown', { cancelable: true }), { code: 'KeyX' });
+  Object.defineProperty(ev, 'target', { value: { tagName: 'INPUT' } });
+  document.dispatchEvent(ev);
+  assert.equal(ev.defaultPrevented, false, 'the letter reaches the field');
+  assert.equal(input.justPressed('inspect'), false);
+  const game = Object.assign(new Event('keydown', { cancelable: true }), { code: 'KeyX' });
+  document.dispatchEvent(game);
+  assert.equal(game.defaultPrevented, true, 'in play, game keys are still captured');
+  assert.equal(input.justPressed('inspect'), true);
 });
 
 test('mouse movement accumulates while locked and is cleared after the frame', async () => {

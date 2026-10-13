@@ -251,3 +251,18 @@ test('Room integration: matches start with arena team spawns', () => {
   assert.ok(Math.abs(p1.move.pos.y) < 0.1, `p1 feet should be near 0, got ${p1.move.pos.y}`);
   assert.ok(Math.abs(p2.move.pos.y) < 0.1, `p2 feet should be near 0, got ${p2.move.pos.y}`);
 });
+
+test('the arena can be drawn: every box surface maps to a real material', async () => {
+  // Regression: crates used surface 'paintedWood', which no material system
+  // knows, so `?map=arena` failed to boot ("unknown surface") in the browser.
+  const { ARENA } = await import('../shared/maps/arena.js');
+  const { ARENA_MATERIAL } = await import('../src/world/index.js');
+  const { MATERIAL_NAMES } = await import('../src/materials/index.js');
+  for (const [surface, material] of Object.entries(ARENA_MATERIAL)) {
+    assert.ok(MATERIAL_NAMES.includes(material), `${surface} -> ${material} is a real material`);
+  }
+  for (const b of ARENA.boxes) {
+    if (b.style === 'floor') continue;
+    assert.ok(b.surface in ARENA_MATERIAL, `box surface '${b.surface}' has a material`);
+  }
+});

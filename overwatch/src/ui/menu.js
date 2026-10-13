@@ -18,14 +18,23 @@ export class MenuManager {
     this._pauseEl = null;
     this._subs = [];
 
-    // Load saved preferences from localStorage
+    // Load saved preferences. Storage can be unavailable (private windows,
+    // blocked site data) and then throws: fall back to defaults rather than
+    // failing the whole boot.
+    const saved = (key) => {
+      try {
+        return localStorage.getItem(key);
+      } catch {
+        return null;
+      }
+    };
     this.prefs = {
-      server: localStorage.getItem('ow_server') || 'ws://localhost:8787',
-      name: localStorage.getItem('ow_name') || 'player',
-      map: localStorage.getItem('ow_map') || (ctx.config.map || 'arena'),
-      mode: localStorage.getItem('ow_mode') || 'teams',
-      room: localStorage.getItem('ow_room') || 'public',
-      time: localStorage.getItem('ow_time') || (ctx.config.timeOfDay || 'golden'),
+      server: saved('ow_server') || 'ws://localhost:8787',
+      name: saved('ow_name') || 'player',
+      map: saved('ow_map') || (ctx.config.map || 'arena'),
+      mode: saved('ow_mode') || 'teams',
+      room: saved('ow_room') || 'public',
+      time: saved('ow_time') || (ctx.config.timeOfDay || 'golden'),
     };
   }
 
@@ -86,6 +95,8 @@ export class MenuManager {
       .ow-menu-container {
         width: 680px;
         max-width: 92vw;
+        max-height: 96vh;
+        overflow-y: auto;
         background: rgba(18, 25, 40, 0.88);
         border: 1px solid rgba(80, 140, 255, 0.35);
         border-radius: 8px;
@@ -539,7 +550,7 @@ export class MenuManager {
 
     // Pause Dialog buttons
     this._pauseEl.querySelector('#pause-resume-btn').addEventListener('click', () => {
-      this.hidePauseMenu();
+      this.resume();
     });
 
     this._pauseEl.querySelector('#pause-exit-btn').addEventListener('click', () => {
@@ -569,12 +580,15 @@ export class MenuManager {
       }
     });
 
-    // Detect pointer unlock during active gameplay to open pause menu
+    // The browser releases the mouse on ESC without always delivering the
+    // keydown: losing a lock we had during play opens the menu.
+    let wasLocked = false;
     document.addEventListener('pointerlockchange', () => {
       const isLocked = document.pointerLockElement === this.ctx.canvas;
-      if (!isLocked && !this.isOpen && !this.isPauseOpen && window.__owPhase === 'running') {
+      if (wasLocked && !isLocked && !this.isOpen && !this.isPauseOpen && window.__owPhase === 'running') {
         triggerPause();
       }
+      wasLocked = isLocked;
     });
   }
 
@@ -584,11 +598,14 @@ export class MenuManager {
     this._pauseEl.classList.remove('active');
     this._el.classList.add('active');
     document.exitPointerLock();
+    // nothing moves (or shoots at you) behind the start menu
+    if (!this.ctx.config.server) this.ctx.time.state.scale = 0;
   }
 
   hideStartMenu() {
     this.isOpen = false;
     this._el.classList.remove('active');
+    this.ctx.time.state.scale = 1;
   }
 
   showPauseMenu() {
@@ -596,15 +613,23 @@ export class MenuManager {
     this.isPauseOpen = true;
     this._pauseEl.classList.add('active');
     document.exitPointerLock();
+    // Single player pauses behind the menu; online the match goes on.
+    if (!this.ctx.config.server) this.ctx.time.state.scale = 0;
   }
 
   hidePauseMenu() {
     this.isPauseOpen = false;
     this._pauseEl.classList.remove('active');
-    // Re-lock mouse pointer to return to match
-    setTimeout(() => {
-      this.ctx.canvas.requestPointerLock();
-    }, 50);
+    this.ctx.time.state.scale = 1;
+  }
+
+  // RESUME GAME: close the menu and capture the mouse again. Called from the
+  // button's click so the browser accepts the request (it needs a user
+  // gesture); a second request while one is pending makes the browser drop
+  // and re-take the lock, which used to look like "ESC" and reopen the menu.
+  resume() {
+    this.hidePauseMenu();
+    if (document.pointerLockElement !== this.ctx.canvas) this.ctx.canvas.requestPointerLock();
   }
 
   deploySinglePlayer() {
@@ -645,11 +670,9 @@ export class MenuManager {
   }
 
   exitMatch() {
-    // If online, close socket connection gracefully
+    // If online, leave the server cleanly before navigating away
     const net = this.ctx.peek('net');
-    if (net && net.ws) {
-      net.close();
-    }
+    if (net) net.close();
 
     this.hidePauseMenu();
 

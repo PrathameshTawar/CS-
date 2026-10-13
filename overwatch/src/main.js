@@ -76,6 +76,7 @@ async function boot() {
           overlay.remove();
         } else {
           overlay.style.opacity = '0';
+          overlay.style.pointerEvents = 'none'; // clicks reach the game while it fades
           setTimeout(() => overlay.remove(), 700);
         }
       }
