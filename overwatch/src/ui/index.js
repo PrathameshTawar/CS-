@@ -6,6 +6,8 @@
 // to sit on top of the canvas; nothing here is read by the pixel gate, and in
 // shot mode no events fire so the HUD stays at rest.
 
+import { MenuManager } from './menu.js';
+
 export class UiSystem {
   static id = 'ui';
   static deps = ['player', 'weapons', 'render'];
@@ -24,6 +26,8 @@ export class UiSystem {
 
     this._build();
     this._wire();
+    this.menu = new MenuManager(ctx);
+    this.menu.init();
   }
 
   _build() {
@@ -182,6 +186,7 @@ export class UiSystem {
     for (const off of this._subs) off();
     this._subs.length = 0;
     if (this._el) this._el.remove();
+    if (this.menu) this.menu.dispose();
   }
 }
 

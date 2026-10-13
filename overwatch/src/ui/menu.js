@@ -1,0 +1,678 @@
+// src/ui/menu.js — Start Menu & In-Game ESC Pause / Exit Dialog.
+//
+// Features:
+// 1. Start Menu: Single Player vs Multiplayer selection.
+//    - Single Player: map (Arena / Plaza), time-of-day (Golden, Day, Dusk, Night), Deploy button.
+//    - Multiplayer: server address (remembers last used), player name, map, mode (Teams / DM), room name, Join button.
+// 2. In-Game ESC Menu:
+//    - When the player presses ESC during a match, exits pointer lock and displays:
+//      "Would you like to close the game menu?"
+//    - Options: "Resume Game" (closes menu, re-locks pointer) and "Exit Match" (quits to Start Menu).
+
+export class MenuManager {
+  constructor(ctx) {
+    this.ctx = ctx;
+    this.isOpen = false;
+    this.isPauseOpen = false;
+    this._el = null;
+    this._pauseEl = null;
+    this._subs = [];
+
+    // Load saved preferences from localStorage
+    this.prefs = {
+      server: localStorage.getItem('ow_server') || 'ws://localhost:8787',
+      name: localStorage.getItem('ow_name') || 'player',
+      map: localStorage.getItem('ow_map') || (ctx.config.map || 'arena'),
+      mode: localStorage.getItem('ow_mode') || 'teams',
+      room: localStorage.getItem('ow_room') || 'public',
+      time: localStorage.getItem('ow_time') || (ctx.config.timeOfDay || 'golden'),
+    };
+  }
+
+  savePrefs() {
+    try {
+      localStorage.setItem('ow_server', this.prefs.server);
+      localStorage.setItem('ow_name', this.prefs.name);
+      localStorage.setItem('ow_map', this.prefs.map);
+      localStorage.setItem('ow_mode', this.prefs.mode);
+      localStorage.setItem('ow_room', this.prefs.room);
+      localStorage.setItem('ow_time', this.prefs.time);
+    } catch {
+      // localStorage may be disabled
+    }
+  }
+
+  init() {
+    if (this.ctx.config.shot) return; // never render in headless screenshot capture
+
+    this._injectStyles();
+    this._buildPauseModal();
+    this._buildStartMenu();
+    this._wireEvents();
+
+    const url = new URL(location.href);
+    const hasExplicitPlay = url.searchParams.has('play') || url.searchParams.has('server');
+
+    // If root address with no parameters, present Start Menu
+    if (!hasExplicitPlay) {
+      this.showStartMenu();
+    }
+  }
+
+  _injectStyles() {
+    if (document.getElementById('ow-menu-styles')) return;
+    const style = document.createElement('style');
+    style.id = 'ow-menu-styles';
+    style.textContent = `
+      .ow-menu-overlay {
+        position: fixed;
+        inset: 0;
+        z-index: 100;
+        display: flex;
+        align-items: center;
+        justify-content: center;
+        background: radial-gradient(circle at center, rgba(14, 20, 32, 0.94) 0%, rgba(6, 9, 15, 0.98) 100%);
+        backdrop-filter: blur(20px);
+        font-family: 'Segoe UI', system-ui, -apple-system, sans-serif;
+        color: #e6edf7;
+        opacity: 0;
+        pointer-events: none;
+        transition: opacity 0.25s ease;
+      }
+      .ow-menu-overlay.active {
+        opacity: 1;
+        pointer-events: auto;
+      }
+      .ow-menu-container {
+        width: 680px;
+        max-width: 92vw;
+        background: rgba(18, 25, 40, 0.88);
+        border: 1px solid rgba(80, 140, 255, 0.35);
+        border-radius: 8px;
+        box-shadow: 0 16px 48px rgba(0, 0, 0, 0.6), 0 0 32px rgba(60, 120, 255, 0.15);
+        overflow: hidden;
+        animation: owMenuPop 0.3s cubic-bezier(0.16, 1, 0.3, 1);
+      }
+      @keyframes owMenuPop {
+        from { transform: scale(0.96) translateY(8px); opacity: 0; }
+        to { transform: scale(1) translateY(0); opacity: 1; }
+      }
+      .ow-menu-header {
+        padding: 24px 32px 18px;
+        background: linear-gradient(180deg, rgba(30, 45, 75, 0.6) 0%, rgba(20, 30, 50, 0) 100%);
+        border-bottom: 1px solid rgba(255, 255, 255, 0.08);
+        display: flex;
+        align-items: center;
+        justify-content: space-between;
+      }
+      .ow-logo-title {
+        font-size: 26px;
+        font-weight: 800;
+        letter-spacing: 6px;
+        color: #ffffff;
+        text-shadow: 0 0 20px rgba(90, 160, 255, 0.6);
+        margin: 0;
+      }
+      .ow-logo-sub {
+        font-size: 11px;
+        letter-spacing: 2px;
+        text-transform: uppercase;
+        color: #7d96b8;
+        margin-top: 4px;
+      }
+      .ow-tabs {
+        display: flex;
+        border-bottom: 1px solid rgba(255, 255, 255, 0.08);
+        background: rgba(12, 17, 28, 0.5);
+      }
+      .ow-tab-btn {
+        flex: 1;
+        padding: 14px 20px;
+        background: none;
+        border: none;
+        border-bottom: 2px solid transparent;
+        color: #8da2c0;
+        font-size: 13px;
+        font-weight: 700;
+        letter-spacing: 2px;
+        text-transform: uppercase;
+        cursor: pointer;
+        transition: all 0.2s ease;
+      }
+      .ow-tab-btn:hover {
+        color: #dbe7f8;
+        background: rgba(255, 255, 255, 0.03);
+      }
+      .ow-tab-btn.active {
+        color: #60a5fa;
+        border-bottom-color: #3b82f6;
+        background: rgba(59, 130, 246, 0.08);
+      }
+      .ow-menu-body {
+        padding: 26px 32px;
+      }
+      .ow-field-group {
+        margin-bottom: 18px;
+      }
+      .ow-field-label {
+        display: block;
+        font-size: 11px;
+        font-weight: 700;
+        letter-spacing: 1.5px;
+        text-transform: uppercase;
+        color: #9cb2cf;
+        margin-bottom: 8px;
+      }
+      .ow-input-text {
+        width: 100%;
+        box-sizing: border-box;
+        padding: 10px 14px;
+        background: rgba(10, 15, 26, 0.7);
+        border: 1px solid rgba(80, 120, 180, 0.35);
+        border-radius: 4px;
+        color: #ffffff;
+        font-size: 14px;
+        font-family: inherit;
+        outline: none;
+        transition: border-color 0.2s;
+      }
+      .ow-input-text:focus {
+        border-color: #60a5fa;
+        box-shadow: 0 0 10px rgba(96, 165, 250, 0.25);
+      }
+      .ow-card-selector {
+        display: grid;
+        grid-template-columns: 1fr 1fr;
+        gap: 12px;
+      }
+      .ow-select-card {
+        padding: 14px 16px;
+        background: rgba(13, 20, 34, 0.65);
+        border: 1px solid rgba(70, 110, 170, 0.3);
+        border-radius: 6px;
+        cursor: pointer;
+        transition: all 0.2s ease;
+        position: relative;
+      }
+      .ow-select-card:hover {
+        border-color: rgba(100, 160, 255, 0.6);
+        background: rgba(20, 30, 52, 0.8);
+      }
+      .ow-select-card.active {
+        border-color: #3b82f6;
+        background: linear-gradient(135deg, rgba(30, 58, 110, 0.5) 0%, rgba(15, 28, 55, 0.7) 100%);
+        box-shadow: 0 0 16px rgba(59, 130, 246, 0.25);
+      }
+      .ow-card-title {
+        font-size: 14px;
+        font-weight: 700;
+        color: #ffffff;
+        display: flex;
+        align-items: center;
+        gap: 8px;
+      }
+      .ow-card-desc {
+        font-size: 11px;
+        color: #8da4c4;
+        margin-top: 4px;
+        line-height: 1.4;
+      }
+      .ow-badge {
+        font-size: 9px;
+        font-weight: 800;
+        letter-spacing: 1px;
+        text-transform: uppercase;
+        padding: 2px 6px;
+        border-radius: 3px;
+        background: #2563eb;
+        color: #fff;
+      }
+      .ow-options-grid {
+        display: grid;
+        grid-template-columns: repeat(4, 1fr);
+        gap: 8px;
+      }
+      .ow-opt-btn {
+        padding: 8px 10px;
+        background: rgba(12, 18, 30, 0.6);
+        border: 1px solid rgba(70, 105, 160, 0.3);
+        border-radius: 4px;
+        color: #9cb2cf;
+        font-size: 12px;
+        font-weight: 600;
+        text-align: center;
+        cursor: pointer;
+        transition: all 0.15s ease;
+      }
+      .ow-opt-btn:hover {
+        border-color: rgba(96, 165, 250, 0.5);
+        color: #ffffff;
+      }
+      .ow-opt-btn.active {
+        border-color: #3b82f6;
+        background: rgba(59, 130, 246, 0.2);
+        color: #60a5fa;
+      }
+      .ow-primary-btn {
+        width: 100%;
+        padding: 14px;
+        background: linear-gradient(90deg, #2563eb 0%, #1d4ed8 100%);
+        border: 1px solid #60a5fa;
+        border-radius: 6px;
+        color: #ffffff;
+        font-size: 14px;
+        font-weight: 800;
+        letter-spacing: 2px;
+        text-transform: uppercase;
+        cursor: pointer;
+        transition: all 0.2s ease;
+        box-shadow: 0 4px 18px rgba(37, 99, 235, 0.4);
+        margin-top: 10px;
+      }
+      .ow-primary-btn:hover {
+        transform: translateY(-1px);
+        box-shadow: 0 6px 24px rgba(37, 99, 235, 0.6);
+        background: linear-gradient(90deg, #3b82f6 0%, #2563eb 100%);
+      }
+      .ow-secondary-btn {
+        width: 100%;
+        padding: 12px;
+        background: rgba(255, 255, 255, 0.05);
+        border: 1px solid rgba(255, 255, 255, 0.15);
+        border-radius: 6px;
+        color: #cbd5e1;
+        font-size: 13px;
+        font-weight: 700;
+        letter-spacing: 1.5px;
+        text-transform: uppercase;
+        cursor: pointer;
+        transition: all 0.2s ease;
+        margin-top: 8px;
+      }
+      .ow-secondary-btn:hover {
+        background: rgba(255, 255, 255, 0.1);
+        color: #ffffff;
+      }
+      .ow-menu-footer {
+        padding: 12px 32px;
+        background: rgba(8, 12, 20, 0.7);
+        border-top: 1px solid rgba(255, 255, 255, 0.06);
+        font-size: 11px;
+        color: #6c82a2;
+        display: flex;
+        justify-content: space-between;
+      }
+      .ow-pause-dialog {
+        width: 440px;
+        max-width: 90vw;
+        background: rgba(14, 20, 32, 0.95);
+        border: 1px solid rgba(80, 140, 255, 0.4);
+        border-radius: 8px;
+        padding: 30px;
+        box-shadow: 0 20px 60px rgba(0, 0, 0, 0.8), 0 0 30px rgba(59, 130, 246, 0.2);
+        text-align: center;
+        animation: owMenuPop 0.25s ease-out;
+      }
+      .ow-pause-title {
+        font-size: 20px;
+        font-weight: 800;
+        letter-spacing: 4px;
+        text-transform: uppercase;
+        color: #ffffff;
+        margin: 0 0 10px;
+      }
+      .ow-pause-prompt {
+        font-size: 14px;
+        color: #94a3b8;
+        line-height: 1.5;
+        margin-bottom: 24px;
+      }
+    `;
+    document.head.appendChild(style);
+  }
+
+  _buildStartMenu() {
+    const el = document.createElement('div');
+    el.id = 'ow-start-menu';
+    el.className = 'ow-menu-overlay';
+
+    el.innerHTML = `
+      <div class="ow-menu-container">
+        <div class="ow-menu-header">
+          <div>
+            <h1 class="ow-logo-title">OVERWATCH</h1>
+            <div class="ow-logo-sub">Tactical Browser FPS · Three.js Engine</div>
+          </div>
+          <div style="font-size:11px;color:#34d399;font-weight:700;display:flex;align-items:center;gap:6px;">
+            <span style="display:inline-block;width:7px;height:7px;background:#34d399;border-radius:50%;"></span>
+            READY
+          </div>
+        </div>
+
+        <div class="ow-tabs">
+          <button class="ow-tab-btn active" id="tab-sp-btn">Single Player</button>
+          <button class="ow-tab-btn" id="tab-mp-btn">Multiplayer</button>
+        </div>
+
+        <!-- Single Player Panel -->
+        <div class="ow-menu-body" id="tab-sp-panel">
+          <div class="ow-field-group">
+            <label class="ow-field-label">Select Map</label>
+            <div class="ow-card-selector">
+              <div class="ow-select-card ${this.prefs.map === 'arena' ? 'active' : ''}" id="sp-map-arena">
+                <div class="ow-card-title">
+                  ARENA
+                  <span class="ow-badge">NEW</span>
+                </div>
+                <div class="ow-card-desc">Competitive 3-Lane tactical arena with sniper corridor, mid crates & CQB interior.</div>
+              </div>
+              <div class="ow-select-card ${this.prefs.map === 'plaza' ? 'active' : ''}" id="sp-map-plaza">
+                <div class="ow-card-title">PLAZA</div>
+                <div class="ow-card-desc">Classic market street plaza with central fountain, shops and perimeter roads.</div>
+              </div>
+            </div>
+          </div>
+
+          <div class="ow-field-group">
+            <label class="ow-field-label">Time of Day</label>
+            <div class="ow-options-grid">
+              <div class="ow-opt-btn ${this.prefs.time === 'golden' ? 'active' : ''}" data-time="golden">Golden</div>
+              <div class="ow-opt-btn ${this.prefs.time === 'day' ? 'active' : ''}" data-time="day">Day</div>
+              <div class="ow-opt-btn ${this.prefs.time === 'dusk' ? 'active' : ''}" data-time="dusk">Dusk</div>
+              <div class="ow-opt-btn ${this.prefs.time === 'night' ? 'active' : ''}" data-time="night">Night</div>
+            </div>
+          </div>
+
+          <button class="ow-primary-btn" id="sp-deploy-btn">DEPLOY MISSION</button>
+        </div>
+
+        <!-- Multiplayer Panel -->
+        <div class="ow-menu-body" id="tab-mp-panel" style="display:none;">
+          <div style="display:grid;grid-template-columns:1fr 1fr;gap:12px;margin-bottom:14px;">
+            <div class="ow-field-group" style="margin:0;">
+              <label class="ow-field-label">Player Name</label>
+              <input type="text" class="ow-input-text" id="mp-name-input" value="${escapeHtml(this.prefs.name)}" maxlength="16" />
+            </div>
+            <div class="ow-field-group" style="margin:0;">
+              <label class="ow-field-label">Room</label>
+              <input type="text" class="ow-input-text" id="mp-room-input" value="${escapeHtml(this.prefs.room)}" maxlength="20" />
+            </div>
+          </div>
+
+          <div class="ow-field-group">
+            <label class="ow-field-label">Server WebSocket URL</label>
+            <input type="text" class="ow-input-text" id="mp-server-input" value="${escapeHtml(this.prefs.server)}" />
+            <div style="font-size:11px;color:#7089a8;margin-top:5px;">
+              Tip: Run <code style="color:#60a5fa;">npm run server</code> in terminal for local hosting on port 8787.
+            </div>
+          </div>
+
+          <div class="ow-field-group">
+            <label class="ow-field-label">Game Mode & Map</label>
+            <div class="ow-card-selector">
+              <div class="ow-select-card ${this.prefs.mode === 'teams' ? 'active' : ''}" id="mp-mode-teams">
+                <div class="ow-card-title">TEAM ROUNDS</div>
+                <div class="ow-card-desc">ALPHA vs BRAVO elimination rounds on the 3-Lane Arena.</div>
+              </div>
+              <div class="ow-select-card ${this.prefs.mode === 'dm' ? 'active' : ''}" id="mp-mode-dm">
+                <div class="ow-card-title">DEATHMATCH</div>
+                <div class="ow-card-desc">Free-for-all respawn combat on Plaza or Arena.</div>
+              </div>
+            </div>
+          </div>
+
+          <button class="ow-primary-btn" id="mp-join-btn">CONNECT & JOIN MATCH</button>
+        </div>
+
+        <div class="ow-menu-footer">
+          <div>WASD Move · Shift Sprint · Space Jump · R Reload · Q/E Lean · X Inspect</div>
+          <div>ESC Menu</div>
+        </div>
+      </div>
+    `;
+
+    document.body.appendChild(el);
+    this._el = el;
+  }
+
+  _buildPauseModal() {
+    const el = document.createElement('div');
+    el.id = 'ow-pause-menu';
+    el.className = 'ow-menu-overlay';
+
+    el.innerHTML = `
+      <div class="ow-pause-dialog">
+        <h2 class="ow-pause-title">GAME MENU</h2>
+        <p class="ow-pause-prompt">Would you like to close the game menu?</p>
+        <div style="display:flex;gap:12px;margin-top:20px;">
+          <button class="ow-primary-btn" id="pause-resume-btn" style="flex:1;margin:0;">RESUME GAME</button>
+          <button class="ow-secondary-btn" id="pause-exit-btn" style="flex:1;margin:0;background:rgba(239,68,68,0.18);border-color:rgba(239,68,68,0.4);color:#fca5a5;">EXIT MATCH</button>
+        </div>
+      </div>
+    `;
+
+    document.body.appendChild(el);
+    this._pauseEl = el;
+  }
+
+  _wireEvents() {
+    // Tab switching
+    const tabSpBtn = this._el.querySelector('#tab-sp-btn');
+    const tabMpBtn = this._el.querySelector('#tab-mp-btn');
+    const panelSp = this._el.querySelector('#tab-sp-panel');
+    const panelMp = this._el.querySelector('#tab-mp-panel');
+
+    tabSpBtn.addEventListener('click', () => {
+      tabSpBtn.classList.add('active');
+      tabMpBtn.classList.remove('active');
+      panelSp.style.display = 'block';
+      panelMp.style.display = 'none';
+    });
+
+    tabMpBtn.addEventListener('click', () => {
+      tabMpBtn.classList.add('active');
+      tabSpBtn.classList.remove('active');
+      panelSp.style.display = 'none';
+      panelMp.style.display = 'block';
+    });
+
+    // Single player map choice
+    const spArena = this._el.querySelector('#sp-map-arena');
+    const spPlaza = this._el.querySelector('#sp-map-plaza');
+    spArena.addEventListener('click', () => {
+      spArena.classList.add('active');
+      spPlaza.classList.remove('active');
+      this.prefs.map = 'arena';
+      this.savePrefs();
+    });
+    spPlaza.addEventListener('click', () => {
+      spPlaza.classList.add('active');
+      spArena.classList.remove('active');
+      this.prefs.map = 'plaza';
+      this.savePrefs();
+    });
+
+    // Single player time of day
+    this._el.querySelectorAll('.ow-opt-btn[data-time]').forEach((btn) => {
+      btn.addEventListener('click', () => {
+        this._el.querySelectorAll('.ow-opt-btn[data-time]').forEach((b) => b.classList.remove('active'));
+        btn.classList.add('active');
+        this.prefs.time = btn.dataset.time;
+        this.savePrefs();
+      });
+    });
+
+    // Multiplayer mode choice
+    const mpTeams = this._el.querySelector('#mp-mode-teams');
+    const mpDm = this._el.querySelector('#mp-mode-dm');
+    mpTeams.addEventListener('click', () => {
+      mpTeams.classList.add('active');
+      mpDm.classList.remove('active');
+      this.prefs.mode = 'teams';
+      this.savePrefs();
+    });
+    mpDm.addEventListener('click', () => {
+      mpDm.classList.add('active');
+      mpTeams.classList.remove('active');
+      this.prefs.mode = 'dm';
+      this.savePrefs();
+    });
+
+    // Single player Deploy button
+    this._el.querySelector('#sp-deploy-btn').addEventListener('click', () => {
+      this.deploySinglePlayer();
+    });
+
+    // Multiplayer Join button
+    this._el.querySelector('#mp-join-btn').addEventListener('click', () => {
+      const serverInput = this._el.querySelector('#mp-server-input');
+      const nameInput = this._el.querySelector('#mp-name-input');
+      const roomInput = this._el.querySelector('#mp-room-input');
+
+      this.prefs.server = serverInput.value.trim() || 'ws://localhost:8787';
+      this.prefs.name = nameInput.value.trim() || 'player';
+      this.prefs.room = roomInput.value.trim() || 'public';
+      this.savePrefs();
+
+      this.joinMultiplayer();
+    });
+
+    // Pause Dialog buttons
+    this._pauseEl.querySelector('#pause-resume-btn').addEventListener('click', () => {
+      this.hidePauseMenu();
+    });
+
+    this._pauseEl.querySelector('#pause-exit-btn').addEventListener('click', () => {
+      this.exitMatch();
+    });
+
+    let lastPauseToggle = 0;
+    const triggerPause = () => {
+      if (this.isOpen || this.isPauseOpen) return;
+      if (window.__owPhase !== 'running') return;
+      lastPauseToggle = performance.now();
+      this.showPauseMenu();
+    };
+
+    // ESC key listener for toggling pause menu
+    window.addEventListener('keydown', (e) => {
+      if (e.code === 'Escape') {
+        if (this.isOpen) return; // already in start menu
+
+        if (this.isPauseOpen) {
+          // If pause menu was just opened within 300ms, ignore accidental double-firing
+          if (performance.now() - lastPauseToggle < 300) return;
+          this.hidePauseMenu();
+        } else {
+          triggerPause();
+        }
+      }
+    });
+
+    // Detect pointer unlock during active gameplay to open pause menu
+    document.addEventListener('pointerlockchange', () => {
+      const isLocked = document.pointerLockElement === this.ctx.canvas;
+      if (!isLocked && !this.isOpen && !this.isPauseOpen && window.__owPhase === 'running') {
+        triggerPause();
+      }
+    });
+  }
+
+  showStartMenu() {
+    this.isOpen = true;
+    this.isPauseOpen = false;
+    this._pauseEl.classList.remove('active');
+    this._el.classList.add('active');
+    document.exitPointerLock();
+  }
+
+  hideStartMenu() {
+    this.isOpen = false;
+    this._el.classList.remove('active');
+  }
+
+  showPauseMenu() {
+    if (this.isOpen) return;
+    this.isPauseOpen = true;
+    this._pauseEl.classList.add('active');
+    document.exitPointerLock();
+  }
+
+  hidePauseMenu() {
+    this.isPauseOpen = false;
+    this._pauseEl.classList.remove('active');
+    // Re-lock mouse pointer to return to match
+    setTimeout(() => {
+      this.ctx.canvas.requestPointerLock();
+    }, 50);
+  }
+
+  deploySinglePlayer() {
+    this.savePrefs();
+    const url = new URL(location.href);
+    url.search = '';
+    url.searchParams.set('play', '1');
+    url.searchParams.set('map', this.prefs.map);
+    url.searchParams.set('time', this.prefs.time);
+
+    // If current loaded session already matches, simply hide start menu and engage
+    if (
+      this.ctx.config.map === this.prefs.map &&
+      this.ctx.config.timeOfDay === this.prefs.time &&
+      !this.ctx.config.server
+    ) {
+      this.hideStartMenu();
+      window.history.replaceState({}, '', url.href);
+      setTimeout(() => this.ctx.canvas.requestPointerLock(), 100);
+      return;
+    }
+
+    // Otherwise reload into clean state with selected parameters
+    location.href = url.href;
+  }
+
+  joinMultiplayer() {
+    this.savePrefs();
+    const url = new URL(location.href);
+    url.search = '';
+    url.searchParams.set('server', this.prefs.server);
+    url.searchParams.set('name', this.prefs.name);
+    url.searchParams.set('map', this.prefs.mode === 'teams' ? 'arena' : this.prefs.map);
+    url.searchParams.set('mode', this.prefs.mode);
+    url.searchParams.set('room', this.prefs.room);
+
+    location.href = url.href;
+  }
+
+  exitMatch() {
+    // If online, close socket connection gracefully
+    const net = this.ctx.peek('net');
+    if (net && net.ws) {
+      net.close();
+    }
+
+    this.hidePauseMenu();
+
+    // Clean URL query and reload to clean root URL so match is exited and start menu is shown
+    const url = new URL(location.href);
+    url.search = '';
+    location.href = url.href;
+  }
+
+  dispose() {
+    for (const off of this._subs) off();
+    this._subs.length = 0;
+    if (this._el) this._el.remove();
+    if (this._pauseEl) this._pauseEl.remove();
+    const style = document.getElementById('ow-menu-styles');
+    if (style) style.remove();
+  }
+}
+
+function escapeHtml(str) {
+  return String(str || '')
+    .replace(/&/g, '&amp;')
+    .replace(/</g, '&lt;')
+    .replace(/>/g, '&gt;')
+    .replace(/"/g, '&quot;');
+}
