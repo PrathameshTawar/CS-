@@ -9,6 +9,10 @@
 //      "Would you like to close the game menu?"
 //    - Options: "Resume Game" (closes menu, re-locks pointer) and "Exit Match" (quits to Start Menu).
 
+import { defaultServerUrl } from '../core/config.js';
+
+const DEFAULT_SERVER = defaultServerUrl(location, import.meta.env?.VITE_SERVER_URL);
+
 export class MenuManager {
   constructor(ctx) {
     this.ctx = ctx;
@@ -29,7 +33,7 @@ export class MenuManager {
       }
     };
     this.prefs = {
-      server: saved('ow_server') || 'ws://localhost:8787',
+      server: saved('ow_server') || DEFAULT_SERVER,
       name: saved('ow_name') || 'player',
       map: saved('ow_map') || (ctx.config.map || 'arena'),
       mode: saved('ow_mode') || 'teams',
@@ -540,7 +544,7 @@ export class MenuManager {
       const nameInput = this._el.querySelector('#mp-name-input');
       const roomInput = this._el.querySelector('#mp-room-input');
 
-      this.prefs.server = serverInput.value.trim() || 'ws://localhost:8787';
+      this.prefs.server = serverInput.value.trim() || DEFAULT_SERVER;
       this.prefs.name = nameInput.value.trim() || 'player';
       this.prefs.room = roomInput.value.trim() || 'public';
       this.savePrefs();

@@ -119,3 +119,15 @@ export function resolveConfig() {
     map: (url.searchParams.get('map') || 'plaza').toLowerCase(),
   };
 }
+
+// The multiplayer server a fresh player connects to. A build can name one
+// (VITE_SERVER_URL, e.g. for a page hosted apart from the server). Otherwise
+// a page served by the game server itself connects back to the same host;
+// the Vite dev and preview servers (5173, 4173) and file:// pages fall back
+// to a local server.
+export function defaultServerUrl(loc, configured = '') {
+  if (configured) return configured;
+  const web = loc.protocol === 'http:' || loc.protocol === 'https:';
+  if (!web || loc.port === '5173' || loc.port === '4173') return 'ws://localhost:8787';
+  return `${loc.protocol === 'https:' ? 'wss' : 'ws'}://${loc.host}`;
+}

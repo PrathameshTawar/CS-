@@ -1,0 +1,16 @@
+# Render Blueprint: hosts OVERWATCH online as one web service that serves the
+# game page and the multiplayer server (WebSockets) on the same address.
+# In Render: New > Blueprint > pick this repository. The game is then at
+# https://<service>.onrender.com/ and the page connects to the server there.
+services:
+  - type: web
+    name: overwatch
+    runtime: node
+    rootDir: overwatch
+    plan: free
+    buildCommand: npm ci && npm run build
+    startCommand: npm start
+    healthCheckPath: /health
+    envVars:
+      - key: NODE_VERSION
+        value: "22"
