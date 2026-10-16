@@ -90,8 +90,36 @@ Works now:
 
 **Not yet:** a bomb objective.
 
-A page served over https (such as the Netlify deploy) can only connect to a
-`wss://` server, so playing online from there needs the server behind TLS.
+### Hosting a match online
+
+The server can also serve the game page, so one deploy gives one link that
+you and your friends open: the page connects back to the server that served
+it, and there's nothing else to set up.
+
+```bash
+cd overwatch
+npm run build        # the game page, into dist/
+npm start            # http://localhost:8787/ serves the game and the server
+```
+
+To put it on the internet, use any host that runs Node or containers and
+supports WebSockets:
+- **Render** (free tier): New → Blueprint → pick this repository. It reads
+  `render.yaml` and the game is at `https://<service>.onrender.com/`. Free
+  services sleep when idle, so the first visit after a while takes about a
+  minute to wake up.
+- **Fly.io, Railway or a VPS:** build `overwatch/Dockerfile` (`docker build
+  -t overwatch overwatch && docker run -p 8787:8787 overwatch`).
+
+The host provides the `PORT` variable and https. An https page connects
+over `wss://` automatically. The health check is at `/health`.
+
+To host the page somewhere else (Netlify, itch.io) and the server on its
+own, build the page with the server's address baked in:
+`VITE_SERVER_URL=wss://<your server> npm run build`. For itch.io, zip the
+contents of `dist/` and upload it as an HTML game. The address field in the
+menu can always point to a different server.
+
 Local and LAN play over `ws://` work from `npm run dev`.
 
 `npm test` covers the shared gameplay and the server: rebuilding the
@@ -130,9 +158,10 @@ design docs in [`stride-ops/docs/`](stride-ops/docs/).
 ```
 overwatch/     Vite + JS game: src/, shared/ (client+server gameplay), server/
                (multiplayer server), tests/, tools/ (capture, imagediff),
-               shots/baseline/
+               shots/baseline/, Dockerfile (game page + server in one container)
 stride-ops/    TypeScript engine: src/, tests/, demo/, docs/, webpack + jest config
 netlify.toml   deploys overwatch/ (stride-ops/netlify.toml deploys the other)
+render.yaml    hosts overwatch/ online: game page + multiplayer server
 ```
 
 Build output (`dist/`, `dist-demo/`) and `node_modules/` are not committed;

@@ -14,7 +14,8 @@
     "shotset": "node tools/shotset.mjs",
     "baseline": "node tools/shotset.mjs --baseline",
     "imagediff": "node tools/imagediff.mjs",
-    "gate": "npm run baseline && npm run shotset && npm run imagediff"
+    "gate": "npm run baseline && npm run shotset && npm run imagediff",
+    "start": "node server/index.js"
   },
   "dependencies": {
     "three": "0.180.0"

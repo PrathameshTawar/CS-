@@ -4,12 +4,19 @@
 //   PORT  (default 8787)        listen port
 //   HOST  (default 0.0.0.0)     listen address
 //   SEED  (default 0x5eed1234)  map seed; clients must load the same map
+//   STATIC_DIR (default ../dist) the built game (`npm run build`); served
+//                                at / when it exists, so one host serves
+//                                both the page and the game server
 //
 // Run: `npm run server` from overwatch/, then open the game with
 // `?server=ws://<host>:8787` (and optionally `&room=<name>&name=<you>`).
+// After `npm run build`, http://<host>:8787/ serves the game itself.
 
+import { existsSync } from 'node:fs';
+import { readFile, stat } from 'node:fs/promises';
 import { createServer } from 'node:http';
-import { pathToFileURL } from 'node:url';
+import { extname, join, normalize, resolve, sep } from 'node:path';
+import { fileURLToPath, pathToFileURL } from 'node:url';
 import { WebSocketServer } from 'ws';
 import { buildColliders } from '../shared/map.js';
 import {
@@ -26,18 +33,73 @@ import { Room } from './room.js';
 const MAX_ROOMS = 64;
 const MAX_MESSAGES_PER_SECOND = 120; // inputs arrive ~30/s; pings ~1/s
 const HELLO_TIMEOUT_MS = 10000; // generous: a client may hitch while loading
+const DEFAULT_STATIC_DIR = fileURLToPath(new URL('../dist', import.meta.url));
 
-export async function startServer({ port = 8787, host = '0.0.0.0', seed = 0x5eed1234, rules = {}, log = console.log } = {}) {
+const CONTENT_TYPES = {
+  '.html': 'text/html; charset=utf-8',
+  '.js': 'text/javascript; charset=utf-8',
+  '.css': 'text/css; charset=utf-8',
+  '.json': 'application/json',
+  '.svg': 'image/svg+xml',
+  '.png': 'image/png',
+  '.ico': 'image/x-icon',
+  '.txt': 'text/plain; charset=utf-8',
+};
+
+// Serves the built game from `root`. Returns false when there is no such
+// file, so the caller can answer 404. Never serves outside `root`.
+async function serveStatic(root, req, res) {
+  let path;
+  try {
+    path = decodeURIComponent(new URL(req.url, 'http://x').pathname);
+  } catch {
+    return false;
+  }
+  if (path.endsWith('/')) path += 'index.html';
+  const file = resolve(root, normalize('.' + path));
+  if (file !== root && !file.startsWith(root + sep)) return false;
+  try {
+    if (!(await stat(file)).isFile()) return false;
+    const body = await readFile(file);
+    res.writeHead(200, {
+      'content-type': CONTENT_TYPES[extname(file)] || 'application/octet-stream',
+      // Vite fingerprints everything under assets/; the page itself must stay fresh
+      'cache-control': path.startsWith('/assets/') ? 'public, max-age=31536000, immutable' : 'no-cache',
+      'x-content-type-options': 'nosniff',
+    });
+    res.end(req.method === 'HEAD' ? undefined : body);
+    return true;
+  } catch {
+    return false;
+  }
+}
+
+export async function startServer({
+  port = 8787,
+  host = '0.0.0.0',
+  seed = 0x5eed1234,
+  rules = {},
+  staticDir = null,
+  log = console.log,
+} = {}) {
   seed >>>= 0;
   const plazaColliders = await buildColliders(seed, 'plaza');
   const { ARENA } = await import('../shared/maps/arena.js');
   const rooms = new Map();
   const clients = new Set(); // { ws, room, player }
 
-  const http = createServer((req, res) => {
-    // health check for hosting platforms
-    res.writeHead(200, { 'content-type': 'application/json' });
-    res.end(JSON.stringify({ ok: true, protocol: PROTOCOL_VERSION, rooms: rooms.size, players: clients.size }));
+  const root = staticDir && existsSync(join(staticDir, 'index.html')) ? resolve(staticDir) : null;
+
+  const http = createServer(async (req, res) => {
+    const health = () => {
+      res.writeHead(200, { 'content-type': 'application/json', 'cache-control': 'no-store' });
+      res.end(JSON.stringify({ ok: true, protocol: PROTOCOL_VERSION, rooms: rooms.size, players: clients.size }));
+    };
+    // health check for hosting platforms; also the whole answer when there is no built game
+    if (req.url === '/health' || !root) return health();
+    if ((req.method === 'GET' || req.method === 'HEAD') && (await serveStatic(root, req, res))) return;
+    res.writeHead(404, { 'content-type': 'text/plain; charset=utf-8' });
+    res.end('not found');
   });
   const wss = new WebSocketServer({ server: http, maxPayload: MAX_MESSAGE_BYTES });
 
@@ -133,6 +195,7 @@ export async function startServer({ port = 8787, host = '0.0.0.0', seed = 0x5eed
   await new Promise((resolve) => http.listen(port, host, resolve));
   const address = http.address();
   log(`[server] protocol ${PROTOCOL_VERSION}, seed ${seed}, ${plazaColliders.length} colliders, ws://${host}:${address.port}`);
+  log(root ? `[server] serving the game from ${root} at http://${host}:${address.port}/` : '[server] no built game to serve (run `npm run build` to serve it here)');
 
   return {
     port: address.port,
@@ -148,9 +211,14 @@ export async function startServer({ port = 8787, host = '0.0.0.0', seed = 0x5eed
 
 // started directly: `node server/index.js`
 if (import.meta.url === pathToFileURL(process.argv[1]).href) {
-  startServer({
+  const server = await startServer({
     port: Number(process.env.PORT) || 8787,
     host: process.env.HOST || '0.0.0.0',
     seed: Number(process.env.SEED) || 0x5eed1234,
+    staticDir: process.env.STATIC_DIR || DEFAULT_STATIC_DIR,
   });
+  // hosting platforms stop a deploy with SIGTERM: close sockets and exit cleanly
+  for (const signal of ['SIGTERM', 'SIGINT']) {
+    process.once(signal, () => server.close().then(() => process.exit(0)));
+  }
 }
