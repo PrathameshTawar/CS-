@@ -128,7 +128,8 @@ export class UiSystem {
           return;
         }
         const hs = p.headshot ? ' ✛' : '';
-        this._feed(`${p.byMe ? 'YOU' : p.killer} ▸ ${p.onMe ? 'YOU' : p.victim}${hs}`, p.byMe || p.onMe);
+        const gun = p.weapon ? ` [${p.weapon}]` : '';
+        this._feed(`${p.byMe ? 'YOU' : p.killer}${gun} ▸ ${p.onMe ? 'YOU' : p.victim}${hs}`, p.byMe || p.onMe);
       }),
     );
   }
@@ -179,7 +180,7 @@ export class UiSystem {
     this._chBot.style.top = '1px';
     this._chL.style.left = `-${off}px`;
     this._chR.style.left = '1px';
-    this._cross.style.opacity = String(ads > 0.5 ? 0.25 : 1);
+    this._cross.style.opacity = String(w && w.scoped ? 0 : ads > 0.5 ? 0.25 : 1);
   }
 
   dispose() {

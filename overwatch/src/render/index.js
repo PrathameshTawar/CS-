@@ -282,7 +282,9 @@ export class RenderSystem {
       vc.fov = this.config.fov; // weapon keeps a fixed FOV (does not ADS-zoom)
       vc.aspect = sw / sh;
       vc.updateProjectionMatrix();
-      vc.quaternion.copy(ctx.camera.quaternion);
+      // the weapon is posed in view space (weapons/index.js): the view
+      // camera stays put, or the gun would swing out of sight as you turn
+      vc.quaternion.identity();
       vc.position.set(0, 0, 0);
       r.setRenderTarget(this._viewRT);
       r.setViewport(0, 0, sw, sh);
@@ -312,7 +314,7 @@ export class RenderSystem {
     vc.fov = this.config.fov;
     vc.aspect = sw / sh;
     vc.updateProjectionMatrix();
-    vc.quaternion.copy(ctx.camera.quaternion);
+    vc.quaternion.identity();
     vc.position.set(0, 0, 0);
     r.setRenderTarget(this._viewRT);
     r.setViewport(0, 0, sw, sh);

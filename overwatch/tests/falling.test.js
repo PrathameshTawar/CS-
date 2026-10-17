@@ -31,7 +31,7 @@ test('server: falling off the map kills, with no kill credit, and respawns in de
   a.next = 0;
   assert.equal(walkOff(r, a), true, 'dead after walking off the edge');
   assert.ok(a.move.pos.y < KILL_Y);
-  assert.deepEqual(kills(r), [[EV_KILL, 0, a.id, 0]], 'killer 0: the world');
+  assert.deepEqual(kills(r), [[EV_KILL, 0, a.id, 0, -1]], 'killer 0: the world, no weapon');
   assert.equal(a.deaths, 1);
   assert.equal(b.kills, 0);
   for (let i = 0; i < RESPAWN_TIME * TICK_RATE + 1; i++) r.step();

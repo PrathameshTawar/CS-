@@ -21,10 +21,12 @@
 //   round timer, banners and a scoreboard (hold Tab).
 
 import * as THREE from 'three';
-import { FIRE_INTERVAL, MAG_SIZE, RESERVE, playerHitbox } from '../../shared/combat.js';
+import { playerHitbox } from '../../shared/combat.js';
+import { WEAPONS, WEAPON_IDS } from '../../shared/weapons.js';
 import { createSoldier, disposeSoldier, poseSoldier } from '../characters/soldier.js';
 import { HALF, HALF_Y_CROUCH, stepMove } from '../../shared/movement.js';
 import {
+  BUY_OPEN,
   END_ELIMINATION,
   END_FORFEIT,
   EV_HIT,
@@ -92,6 +94,9 @@ export class NetSystem {
     this._outbox = [];
     this._shots = [];
     this._reloads = [];
+    this._switches = [];
+    this.money = 0;
+    this.buyFlags = 0; // BUY_* from the last snapshot
     this._snap = null; // newest snapshot not yet reconciled against
     this._buffer = []; // recent snapshots for interpolation
     this._tickOffset = null; // server tick - local tick estimate
@@ -144,6 +149,15 @@ export class NetSystem {
       e.on('weapon:reload', (p) => {
         if (this.id && p.phase === 'start') this._reloads.push(this._seq);
       }),
+      e.on('weapon:switch', (p) => {
+        if (!this.id) return;
+        // only the last switch before each step matters; a spun wheel can't
+        // overflow the server's per-message limit
+        const last = this._switches[this._switches.length - 1];
+        if (last && last[0] === this._seq) last[1] = p.slot;
+        else this._switches.push([this._seq, p.slot]);
+        if (this._switches.length > 4) this._switches.shift();
+      }),
     ];
   }
 
@@ -164,6 +178,19 @@ export class NetSystem {
     ws.onclose = (e) => {
       if (this.status !== 'error') this._fail(e.reason || 'disconnected');
     };
+  }
+
+  // Purchases go straight to the server; the next snapshot shows the result.
+  get canBuy() {
+    return this.status === 'online' && (this.buyFlags & BUY_OPEN) !== 0;
+  }
+
+  buy(weaponId) {
+    if (this.ws && this.ws.readyState === WebSocket.OPEN) this.ws.send(encode({ t: 'buy', w: weaponId }));
+  }
+
+  sell(weaponId) {
+    if (this.ws && this.ws.readyState === WebSocket.OPEN) this.ws.send(encode({ t: 'sell', w: weaponId }));
   }
 
   // Leave the match on purpose (the ESC menu's EXIT MATCH): close the socket
@@ -236,11 +263,12 @@ export class NetSystem {
         // someone else fired: tracer from their muzzle (ours were drawn locally)
         e.emit('bullet:tracer', { from: { x: ev[2], y: ev[3], z: ev[4] }, to: { x: ev[5], y: ev[6], z: ev[7] }, speed: 800 });
         // the shot's sound; a burst arriving in one snapshot is spread back
-        // out at the rifle's fire rate instead of playing as one bang
+        // out at the weapon's fire rate instead of playing as one bang
+        const weapon = WEAPON_IDS[ev[8]] || 'rifle';
         const now = this.ctx.time.state.raw;
         const at = Math.max(now, this._nextShotAt.get(ev[1]) || 0);
-        this._nextShotAt.set(ev[1], at + FIRE_INTERVAL);
-        this._shotSounds.push({ at, origin: { x: ev[2], y: ev[3], z: ev[4] } });
+        this._nextShotAt.set(ev[1], at + WEAPONS[weapon].interval);
+        this._shotSounds.push({ at, origin: { x: ev[2], y: ev[3], z: ev[4] }, weapon });
       } else if (type === EV_HIT) {
         const [, shooter, target, amount, headshot, x, y, z] = ev;
         const point = { x, y, z };
@@ -252,12 +280,14 @@ export class NetSystem {
         }
         if (target === me) this._lastAttacker = shooter;
       } else if (type === EV_KILL) {
-        const [, killer, victim, headshot] = ev;
+        const [, killer, victim, headshot, weaponIdx] = ev;
+        const weapon = WEAPON_IDS[weaponIdx];
         if (killer === me) e.emit('damage:dealt', { target: { remoteId: victim }, amount: 0, headshot: headshot === 1, killed: true, point: null });
         e.emit('player:kill', {
           killer: killer === 0 ? null : this._nameOf(killer), // null: fell off the map
           victim: this._nameOf(victim),
           headshot: headshot === 1,
+          weapon: weapon ? WEAPONS[weapon].name : null,
           byMe: killer === me,
           onMe: victim === me,
         });
@@ -270,7 +300,10 @@ export class NetSystem {
       }
     }
 
-    const [hp, dead, , , kills, deaths, spawns, team] = msg.me;
+    const [hp, dead, , , kills, deaths, spawns, team, money, slot, primary, secondary, buyFlags] = msg.me;
+    this.money = money;
+    this.buyFlags = buyFlags;
+    this.buyUntil = msg.game[8];
     this.team = team;
     this.game = msg.game;
     const phase = msg.game[0];
@@ -284,14 +317,12 @@ export class NetSystem {
     this.kills = kills;
     this.deaths = deaths;
     if (spawns !== this._spawns) {
-      // (re)spawned: fresh magazine; the snapshot's state moves us there
-      if (this._spawns >= 0) {
-        const w = this.weapons;
-        w.ammo = MAG_SIZE;
-        w.reserve = RESERVE;
-        w.reloading = false;
-      }
+      // (re)spawned: the server's loadout, full ammo; the snapshot's state moves us there
+      this.weapons.setLoadout([primary, secondary], slot);
       this._spawns = spawns;
+    } else {
+      // a purchase or sale landed: take it (our predicted ammo stays)
+      this.weapons.syncOwned([primary, secondary]);
     }
   }
 
@@ -318,10 +349,12 @@ export class NetSystem {
       const msg = { t: 'input', i: this._outbox };
       if (this._shots.length) msg.f = this._shots;
       if (this._reloads.length) msg.r = this._reloads;
+      if (this._switches.length) msg.w = this._switches;
       this.ws.send(encode(msg));
       this._outbox = [];
       this._shots = [];
       this._reloads = [];
+      this._switches = [];
     }
 
     if (this._snap) this._reconcile(h);
@@ -368,7 +401,7 @@ export class NetSystem {
     for (let i = this._shotSounds.length - 1; i >= 0; i--) {
       const s = this._shotSounds[i];
       if (s.at <= ctx.time.state.raw) {
-        ctx.events.emit('actor:fire', { origin: s.origin });
+        ctx.events.emit('actor:fire', { origin: s.origin, weapon: s.weapon });
         this._shotSounds.splice(i, 1);
       }
     }

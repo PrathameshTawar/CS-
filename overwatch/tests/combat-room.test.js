@@ -6,6 +6,7 @@ import assert from 'node:assert/strict';
 import { readFileSync } from 'node:fs';
 import { BODY_DAMAGE, MAG_SIZE, MAX_HEALTH, RELOAD_REFILL_AT, RESPAWN_TIME } from '../shared/combat.js';
 import { EV_HIT, EV_KILL, EV_SHOT, EV_SPAWN, MAX_REWIND_TICKS, TICK_RATE, writeInput, writeShot } from '../shared/protocol.js';
+import { weaponIndex } from '../shared/weapons.js';
 import { Room } from '../server/room.js';
 
 const colliders = JSON.parse(readFileSync(new URL('./fixtures/plaza-colliders.json', import.meta.url), 'utf8'));
@@ -65,7 +66,7 @@ test('a body shot deals body damage; three kill', () => {
   shoot(room, a, chest(b));
   assert.equal(b.hp, 0);
   assert.equal(b.dead, true);
-  assert.deepEqual(eventsOf(room, EV_KILL), [[EV_KILL, a.id, b.id, 0]]);
+  assert.deepEqual(eventsOf(room, EV_KILL), [[EV_KILL, a.id, b.id, 0, weaponIndex('rifle')]]);
   assert.equal(a.kills, 1);
   assert.equal(b.deaths, 1);
 });
@@ -74,7 +75,7 @@ test('a headshot kills outright', () => {
   const { room, a, b } = setup();
   shoot(room, a, head(b));
   assert.equal(b.dead, true);
-  assert.deepEqual(eventsOf(room, EV_KILL), [[EV_KILL, a.id, b.id, 1]]);
+  assert.deepEqual(eventsOf(room, EV_KILL), [[EV_KILL, a.id, b.id, 1, weaponIndex('rifle')]]);
 });
 
 test('fire rate, ammo and reload are enforced by the server', () => {

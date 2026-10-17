@@ -67,7 +67,8 @@ export class MySystem {
 | `world` | `src/world/` | level geometry, the modular building kit, props, set dressing, static collision meshes. Layout randomness comes from `layoutRng(seed)` (`shared/map.js`) so the server can rebuild the colliders headlessly |
 | `physics` | `src/physics/` | the client's `CollisionWorld` (`shared/collision.js`): raycasts, character controller collision; rigid bodies, ragdolls, penetration |
 | `player` | `src/player/` | camera feel, sprint/slide/mantle/lean, health; the movement step itself is `shared/movement.js` |
-| `weapons` | `src/weapons/` | weapon meshes, viewmodel rig, ADS, recoil, sway, bob, reload & inspect animation, ballistics |
+| `weapons` | `src/weapons/` | the loadout (primary + pistol) and switching, weapon meshes, viewmodel rig, ADS and the sniper scope, recoil, sway, bob, draw/reload/inspect animation, ballistics. Combat clocks run on fixed steps, like the server's |
+| `buy` | `src/buy/` | the buy menu (B), money and buy-time HUD; online it asks the server through `net` |
 | `fx` | `src/fx/` | GPU particles, muzzle flash, tracers, impacts, decals, smoke, blood, shells |
 | `ai` | `src/ai/` | enemy characters, navigation, perception, cover selection, combat behaviour |
 | `ui` | `src/ui/` | HUD, crosshair, hitmarkers, damage indicators, ammo, killfeed, menus |
@@ -90,6 +91,7 @@ functions, not a subsystem.
 | `shared/movement.js` | `createMoveState`, `stepMove`: one fixed step of walk/run/crouch/jump |
 | `shared/map.js` | `layoutRng(seed)`, and `buildColliders(seed)`, which runs the world headlessly in Node and returns its static colliders |
 | `shared/combat.js` | rifle constants, damage, the bullet trace (`traceShot`) and player hitboxes |
+| `shared/weapons.js` | the weapon table (prices, fire rate, ammo, damage, spread, draw/reload times) and the round economy |
 | `shared/protocol.js` | the wire protocol: message shapes, rates, input validation, state packing |
 
 ### Multiplayer
@@ -138,15 +140,16 @@ Emit and listen via `ctx.events`. Payloads are plain objects. The canonical set:
 |---|---|---|
 | `weapon:fire` | `{ weapon, origin: {x,y,z}, dir: {x,y,z}, seed }` | weapons |
 | `weapon:reload` | `{ weapon, phase }` | weapons |
+| `weapon:switch` | `{ slot, weapon }` — a weapon is being drawn (net sends it to the server) | weapons |
 | `weapon:shell` | `{ position, velocity }` | weapons |
 | `bullet:impact` | `{ point, normal, surface, incident, damage }` | physics |
 | `bullet:tracer` | `{ from, to, speed }` | weapons |
 | `damage:dealt` | `{ target, amount, headshot, killed, point }` | ai / physics |
 | `damage:taken` | `{ amount, from, health }` | player |
 | `actor:death` | `{ actor, point, impulse }` | ai |
-| `actor:fire` | `{ origin }` — another shooter fired (AI soldier, remote player) | ai, net |
+| `actor:fire` | `{ origin, weapon? }` — another shooter fired (AI soldier, remote player) | ai, net |
 | `actor:footstep` | `{ position, running }` — another character's step | net |
-| `player:kill` | `{ killer, victim, headshot, byMe, onMe }` (names; `killer: null` = fell off the map) | net, player |
+| `player:kill` | `{ killer, victim, headshot, weapon?, byMe, onMe }` (names; `killer: null` = fell off the map; `weapon` its display name) | net, player |
 
 `damage:dealt` semantics: `target` is who the damage lands ON. When an enemy
 round connects, `target` is `'player'`; the player system applies it and emits
