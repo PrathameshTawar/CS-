@@ -589,7 +589,9 @@ export class MenuManager {
     let wasLocked = false;
     document.addEventListener('pointerlockchange', () => {
       const isLocked = document.pointerLockElement === this.ctx.canvas;
-      if (wasLocked && !isLocked && !this.isOpen && !this.isPauseOpen && window.__owPhase === 'running') {
+      // the buy menu releases the mouse on purpose: that's not a pause
+      const buying = this.ctx.peek('buy') && this.ctx.peek('buy').open;
+      if (wasLocked && !isLocked && !this.isOpen && !this.isPauseOpen && !buying && window.__owPhase === 'running') {
         triggerPause();
       }
       wasLocked = isLocked;

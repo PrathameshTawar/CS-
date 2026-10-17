@@ -63,14 +63,15 @@ export class AudioSystem {
   _wire() {
     const e = this.ctx.events;
     this._subs.push(
-      e.on('weapon:fire', (p) => this.gunshot(p && p.origin ? p.origin : null)),
+      e.on('weapon:fire', (p) => this.gunshot(p && p.origin ? p.origin : null, p && p.weapon)),
+      e.on('weapon:switch', () => this.reload('end')), // the click of a weapon coming up
       e.on('weapon:reload', (p) => this.reload(p.phase)),
       e.on('weapon:shell', (p) => this.shell(p.position)),
       e.on('bullet:impact', (p) => this.impact(p.surface, p.point)),
       e.on('bullet:tracer', (p) => this.tracer(p.from, p.to)),
       e.on('player:footstep', (p) => this.footstep(p.running, p.position)),
       // other shooters (AI soldiers, remote players): positioned gunfire/steps
-      e.on('actor:fire', (p) => this.gunshot(p.origin)),
+      e.on('actor:fire', (p) => this.gunshot(p.origin, p.weapon)),
       e.on('actor:footstep', (p) => this.footstep(p.running, p.position)),
       e.on('player:land', (p) => this.land(p.velocity)),
       e.on('damage:taken', () => this.hurt()),
@@ -136,16 +137,18 @@ export class AudioSystem {
 
   // --- cues ---
 
-  gunshot(origin) {
+  gunshot(origin, weapon = 'rifle') {
     if (!this.ac) return;
     const s = this._spatial(origin || this.ctx.camera.getWorldPosition(new THREE.Vector3()));
     // close/self shot is loud and centered; distant shots are panned + faint
     const dist = origin ? this._spatial(origin).gain : 1;
-    const vol = Math.max(0.35, dist);
-    this._noise(0.09, vol * 0.5, 900, 0.8, 0, s.pan);
-    this._tone(110, 0.12, 'sine', vol * 0.4);
-    this._noise(0.03, vol * 0.3, 3200, 2, 0, s.pan);
-    this._tone(180, 0.06, 'triangle', vol * 0.2);
+    // each weapon's voice: length, body pitch and loudness relative to the rifle
+    const v = GUN_VOICES[weapon] || GUN_VOICES.rifle;
+    const vol = Math.max(0.35, dist) * v.vol;
+    this._noise(0.09 * v.len, vol * 0.5, 900 * v.pitch, 0.8, 0, s.pan);
+    this._tone(110 * v.pitch, 0.12 * v.len, 'sine', vol * 0.4);
+    this._noise(0.03 * v.len, vol * 0.3, 3200 * v.pitch, 2, 0, s.pan);
+    this._tone(180 * v.pitch, 0.06 * v.len, 'triangle', vol * 0.2);
   }
 
   reload(phase) {
@@ -225,3 +228,11 @@ export class AudioSystem {
     }
   }
 }
+
+const GUN_VOICES = {
+  pistol: { len: 0.7, pitch: 1.35, vol: 0.75 },
+  heavy: { len: 1.1, pitch: 0.85, vol: 1.15 },
+  smg: { len: 0.75, pitch: 1.2, vol: 0.8 },
+  rifle: { len: 1, pitch: 1, vol: 1 },
+  sniper: { len: 1.8, pitch: 0.7, vol: 1.4 },
+};

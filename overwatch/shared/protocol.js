@@ -11,7 +11,10 @@
 //                                               the hello creates the room
 //     { t: 'input', i: [[seq, f, r, flags, yaw, pitch], ...],
 //       f?: [[seq, ox, oy, oz, dx, dy, dz, viewTick], ...],   shots
-//       r?: [seq, ...] }                                      reload starts
+//       r?: [seq, ...],                                       reload starts
+//       w?: [[seq, slot], ...] }                              weapon switches
+//     { t: 'buy', w }                           buy weapon id w (shared/weapons.js)
+//     { t: 'sell', w }                          sell back weapon id w
 //     { t: 'ping', c }                          c: client clock (ms)
 //   server -> client
 //     { t: 'welcome', id, seed, room, tick }
@@ -19,7 +22,7 @@
 //     { t: 'pong', c }
 //     { t: 'error', code, message }             then the socket closes
 //
-// Shots and reloads carry the seq of the input step they happen BEFORE, so
+// Shots, reloads and switches carry the seq of the input step they happen BEFORE, so
 // the server resolves them against exactly the state the client fired from.
 // `viewTick` is the server tick the shooter was looking at (remote players
 // are drawn in the past); the server rewinds targets to it (lag
@@ -28,13 +31,15 @@
 // Snapshot: `ack` is the last input seq applied. `you` is the recipient's full
 // movement state (see packState) so the client can rewind to it and replay
 // unacknowledged inputs; `me` is [hp, dead, ammo, reserve, kills, deaths,
-// spawns, team]. `players` holds every OTHER player as
-// [id, x, y, z, yaw, pitch, flags, name, kills, deaths, team]. `game` is
-// [phase, phaseEndsTick, round, scoreAlpha, scoreBravo, lastRoundWinner,
-// roundsToWin, deathmatch]. `ev` lists events since the recipient's last
-// snapshot (EV_* below).
+// spawns, team, money, slot, primary, secondary, buy] where ammo/reserve
+// are the held weapon's, primary/secondary are [weaponId, ammo, reserve]
+// (primary null when empty) and buy is BUY_* flags. `players` holds every
+// OTHER player as [id, x, y, z, yaw, pitch, flags, name, kills, deaths,
+// team, heldWeaponId]. `game` is [phase, phaseEndsTick, round, scoreAlpha,
+// scoreBravo, lastRoundWinner, roundsToWin, deathmatch, buyUntilTick]. `ev`
+// lists events since the recipient's last snapshot (EV_* below).
 
-export const PROTOCOL_VERSION = 3;
+export const PROTOCOL_VERSION = 4;
 export const TICK_RATE = 120; // server steps per second; equals the client's FIXED_STEP
 export const SNAPSHOT_EVERY = 6; // ticks between snapshots (20 Hz)
 export const INPUT_SEND_EVERY = 4; // client fixed steps per input batch (30 Hz)
@@ -56,12 +61,18 @@ export const PL_GROUNDED = 2;
 export const PL_DEAD = 4;
 
 // combat events in snapshots
-export const EV_SHOT = 1; // [EV_SHOT, shooterId, ox, oy, oz, ex, ey, ez]
+export const EV_SHOT = 1; // [EV_SHOT, shooterId, ox, oy, oz, ex, ey, ez, weaponIndex]
 export const EV_HIT = 2; // [EV_HIT, shooterId, targetId, damage, headshot, x, y, z]
-export const EV_KILL = 3; // [EV_KILL, killerId (0: fell off the map), victimId, headshot]
+export const EV_KILL = 3; // [EV_KILL, killerId (0: fell off the map), victimId, headshot, weaponIndex (-1: none)]
 export const EV_SPAWN = 4; // [EV_SPAWN, playerId]
 export const EV_ROUND_END = 5; // [EV_ROUND_END, round, winnerTeam (-1 draw), reason]
 export const EV_MATCH_END = 6; // [EV_MATCH_END, winnerTeam]
+
+// snapshot `me` buy flags
+export const BUY_OPEN = 1; // you can buy now (alive, buy time, in the buy zone)
+export const BUY_FREE = 2; // purchases cost nothing (warmup, deathmatch)
+export const BUY_SELL_PRIMARY = 4; // your primary was bought this round: it can be sold back
+export const BUY_SELL_SECONDARY = 8;
 
 // game modes (chosen by the hello that creates a room)
 export const MODE_TEAMS = 'teams';
@@ -138,6 +149,14 @@ export function readShot(raw) {
   const len = Math.hypot(dx, dy, dz);
   if (len < 0.9 || len > 1.1) return null;
   return { seq, origin: { x: ox, y: oy, z: oz }, dir: { x: dx / len, y: dy / len, z: dz / len }, viewTick };
+}
+
+// Validates one wire weapon switch [seq, slot]; returns { seq, slot } or null.
+export function readSwitch(raw) {
+  if (!Array.isArray(raw) || raw.length !== 2) return null;
+  const [seq, slot] = raw;
+  if (!Number.isInteger(seq) || seq < 0 || (slot !== 0 && slot !== 1)) return null;
+  return { seq, slot };
 }
 
 export function writeShot(seq, origin, dir, viewTick) {

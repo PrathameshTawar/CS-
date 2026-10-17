@@ -33,6 +33,7 @@ export class PlayerSystem {
     this.pitch = 0;
     this.lean = 0;
     this.ads = 0; // 0..1, driven by weapons
+    this.adsFov = 52; // the held weapon's aiming field of view
     this.lastAim = { dx: 0, dy: 0 };
     this._shake = 0;
     this._recoilPitch = 0;
@@ -163,7 +164,8 @@ export class PlayerSystem {
     const inp = ctx.input;
     // look
     const aim = inp.consumeAim();
-    const sens = ctx.config.mouseSensitivity;
+    // a scope (zoom past 40°) slows the mouse in step with the zoom
+    const sens = ctx.config.mouseSensitivity * (this.adsFov < 40 ? 1 - this.ads * (1 - this.adsFov / ctx.config.fov) : 1);
     this.lastAim.dx = aim.dx;
     this.lastAim.dy = aim.dy;
     this.yaw -= aim.dx * sens;
@@ -214,7 +216,7 @@ export class PlayerSystem {
 
     // FOV: base + sprint kick + punch, minus ADS zoom (weapons drive ads)
     const base = ctx.config.fov;
-    const target = base + (this.sprinting ? 4 : 0) + this._fovPunch * 3 - this.ads * (base - 52);
+    const target = base + (this.sprinting ? 4 : 0) + this._fovPunch * 3 - this.ads * (base - this.adsFov);
     const fov = this.camera.fov + (target - this.camera.fov) * Math.min(1, dt * 10);
     if (Math.abs(fov - this.camera.fov) > 0.01) {
       this.camera.fov = fov;
@@ -237,8 +239,10 @@ export class PlayerSystem {
     this._fovPunch += amount;
   }
 
-  setAds(v) {
+  // `fov`: the held weapon's aiming field of view (shared/weapons.js)
+  setAds(v, fov = 52) {
     this.ads = v;
+    this.adsFov = fov;
   }
 
   getEyeWorld(out) {

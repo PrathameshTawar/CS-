@@ -21,7 +21,13 @@ npm test           # shared gameplay tests (Node built-in runner, no deps)
 ```
 
 Controls: click to lock the mouse, **WASD** move, **Shift** sprint, **Space**
-jump, **R** reload, **Q/E** lean, **F** interact, **G** use, **X** inspect.
+jump, **R** reload, **Q/E** lean, **F** interact, **G** use, **X** inspect,
+**1 / 2** or the **mouse wheel** switch between your main weapon and pistol,
+**B** opens the buy menu.
+
+Weapons: Pistol (free, everyone has one), Heavy Pistol ($700), SMG ($1,250),
+Assault Rifle ($2,700) and Sniper Rifle ($4,750, right-click to scope). In
+single player everything in the buy menu is free.
 
 URL options: `?q=low|medium|high|ultra` (quality), `?time=day|golden|dusk|night`,
 `?seed=<n>`, `?debug`.
@@ -74,21 +80,34 @@ Works now:
   movement is predicted, so it feels instant, and other players are smoothed.
 - Shooting decided by the server, with lag compensation: a shot hits where
   you saw the target, up to 400 ms back.
-- Damage: 34 to the body (three hits kill) and 100 for a headshot. In
+- Damage depends on the weapon: the rifle does 34 to the body (three hits
+  kill) and 100 for a headshot; the sniper kills with one hit anywhere. In
   deathmatch and warmup you respawn after 3 s at the spawn point farthest
-  from enemies, with a full magazine.
-- The server enforces fire rate, ammo, reloads and where a shot can come
-  from, so a modified client can't fire faster, skip reloads or shoot from
-  somewhere it isn't.
+  from enemies, with full ammo.
+- Money and buying, like Counter-Strike. A team match starts everyone on
+  the free pistol with $800. Kills pay $300 ($600 with the SMG, $100 with
+  the sniper). Winning a round pays $3,250; losing pays $1,400, plus $500
+  for each further loss in a row (at most $3,400). Press **B** to buy
+  during the 6 s freeze and the first 20 s of the round, near your team's
+  spawn; the timer shows under your money. A weapon bought this round can
+  be sold back for its full price until buy time ends. If you survive the
+  round you keep your weapons; if you die you start the next round with the
+  pistol. Warmup and deathmatch give you a rifle and make buying free.
+- The server enforces fire rate, ammo, reloads, weapon switches, purchases
+  and where a shot can come from, so a modified client can't fire faster,
+  skip reloads, use a weapon it didn't pay for or shoot from somewhere it
+  isn't.
 - Hitmarkers appear only for hits the server confirms. There's a kill feed
   for every kill in the room, and dead players lie down.
 - AI enemies are switched off online.
 
 - Other players are full soldier models in their team colour (or their own
   colour in deathmatch). They walk, crouch, aim up and down, and fall when
-  killed, and you hear their gunfire and footsteps from where they are.
+  killed, and you hear their gunfire (each weapon sounds different) and
+  footsteps from where they are.
 
-**Not yet:** a bomb objective.
+**Not yet:** a bomb objective, armour and grenades. Other players are drawn
+holding a rifle whatever they carry (you still hear their real weapon).
 
 ### Hosting a match online
 

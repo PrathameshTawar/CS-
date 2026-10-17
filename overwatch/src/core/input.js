@@ -8,6 +8,7 @@
 //   zero fixed steps (above 120 fps), so step presses are cleared by
 //   `endSteps()` only after a frame that ran at least one step; a press is
 //   never lost between steps.
+// - wheel(): mouse-wheel notches this frame (+1 down, -1 up), while locked.
 
 const KEYMAP = {
   forward: ['KeyW', 'ArrowUp'],
@@ -23,6 +24,9 @@ const KEYMAP = {
   interact: ['KeyF'],
   inspect: ['KeyX'],
   use: ['KeyG'],
+  slot1: ['Digit1'], // primary
+  slot2: ['Digit2'], // pistol
+  buy: ['KeyB'],
 };
 
 export function createInput(ctx) {
@@ -32,6 +36,7 @@ export function createInput(ctx) {
   const stepPressed = new Set(); // since the last endSteps()
   const buttons = { fire: false, ads: false, firePressed: false, adsPressed: false };
   const aim = { dx: 0, dy: 0, sensitivity: 1 };
+  let wheel = 0;
   const _aimOut = { dx: 0, dy: 0 }; // reused to avoid per-frame allocation
   let locked = false;
   const canvas = ctx.canvas;
@@ -93,6 +98,9 @@ export function createInput(ctx) {
     if (e.button === 0) buttons.fire = false;
     else if (e.button === 2) buttons.ads = false;
   };
+  const onWheel = (e) => {
+    if (locked && e.deltaY !== 0) wheel += Math.sign(e.deltaY);
+  };
   const onContextMenu = (e) => e.preventDefault();
   const onLockChange = () => {
     locked = document.pointerLockElement === canvas;
@@ -112,6 +120,7 @@ export function createInput(ctx) {
   document.addEventListener('mouseup', onMouseUp);
   document.addEventListener('contextmenu', onContextMenu);
   document.addEventListener('pointerlockchange', onLockChange);
+  document.addEventListener('wheel', onWheel, { passive: true });
 
   const api = {
     get locked() {
@@ -141,6 +150,9 @@ export function createInput(ctx) {
     adsPressed() {
       return buttons.adsPressed;
     },
+    wheel() {
+      return wheel;
+    },
     consumeAim() {
       _aimOut.dx = aim.dx * aim.sensitivity;
       _aimOut.dy = aim.dy * aim.sensitivity;
@@ -157,6 +169,7 @@ export function createInput(ctx) {
       buttons.adsPressed = false;
       aim.dx = 0;
       aim.dy = 0;
+      wheel = 0;
     },
     dispose() {
       document.removeEventListener('keydown', onKeyDown);
@@ -166,6 +179,7 @@ export function createInput(ctx) {
       document.removeEventListener('mouseup', onMouseUp);
       document.removeEventListener('contextmenu', onContextMenu);
       document.removeEventListener('pointerlockchange', onLockChange);
+      document.removeEventListener('wheel', onWheel);
     },
   };
   return api;
