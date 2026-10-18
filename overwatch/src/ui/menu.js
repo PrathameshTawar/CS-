@@ -37,7 +37,7 @@ export class MenuManager {
       server: saved('ow_server') || DEFAULT_SERVER,
       name: saved('ow_name') || 'player',
       map: saved('ow_map') || (ctx.config.map || 'arena'),
-      mode: saved('ow_mode') || 'teams',
+      mode: saved('ow_mode') || 'bomb',
       room: saved('ow_room') || 'public',
       time: saved('ow_time') || (ctx.config.timeOfDay || 'golden'),
     };
@@ -427,12 +427,16 @@ export class MenuManager {
 
           <div class="ow-field-group">
             <label class="ow-field-label">Game Mode & Map</label>
-            <div class="ow-card-selector">
-              <div class="ow-select-card ${this.prefs.mode === 'teams' ? 'active' : ''}" id="mp-mode-teams">
+            <div class="ow-card-selector" style="grid-template-columns:repeat(3,1fr)">
+              <div class="ow-select-card ${this.prefs.mode === 'bomb' ? 'active' : ''}" id="mp-mode-bomb" data-mode="bomb">
+                <div class="ow-card-title">BOMB DEFUSAL</div>
+                <div class="ow-card-desc">Attack: plant the bomb on site A or B. Defend: stop or defuse it. Arena.</div>
+              </div>
+              <div class="ow-select-card ${this.prefs.mode === 'teams' ? 'active' : ''}" id="mp-mode-teams" data-mode="teams">
                 <div class="ow-card-title">TEAM ROUNDS</div>
                 <div class="ow-card-desc">ALPHA vs BRAVO elimination rounds on the 3-Lane Arena.</div>
               </div>
-              <div class="ow-select-card ${this.prefs.mode === 'dm' ? 'active' : ''}" id="mp-mode-dm">
+              <div class="ow-select-card ${this.prefs.mode === 'dm' ? 'active' : ''}" id="mp-mode-dm" data-mode="dm">
                 <div class="ow-card-title">DEATHMATCH</div>
                 <div class="ow-card-desc">Free-for-all respawn combat on Plaza or Arena.</div>
               </div>
@@ -443,7 +447,7 @@ export class MenuManager {
         </div>
 
         <div class="ow-menu-footer">
-          <div>WASD Move · Shift Sprint · Space Jump · R Reload · Q/E Lean · X Inspect</div>
+          <div>WASD Move · Shift Sprint · Space Jump · R Reload · 1/2 Switch · B Buy · F Plant/Defuse · Q/E Lean</div>
           <div>ESC Menu</div>
         </div>
       </div>
@@ -522,20 +526,14 @@ export class MenuManager {
     });
 
     // Multiplayer mode choice
-    const mpTeams = this._el.querySelector('#mp-mode-teams');
-    const mpDm = this._el.querySelector('#mp-mode-dm');
-    mpTeams.addEventListener('click', () => {
-      mpTeams.classList.add('active');
-      mpDm.classList.remove('active');
-      this.prefs.mode = 'teams';
-      this.savePrefs();
-    });
-    mpDm.addEventListener('click', () => {
-      mpDm.classList.add('active');
-      mpTeams.classList.remove('active');
-      this.prefs.mode = 'dm';
-      this.savePrefs();
-    });
+    const modeCards = this._el.querySelectorAll('[data-mode]');
+    for (const card of modeCards) {
+      card.addEventListener('click', () => {
+        for (const c of modeCards) c.classList.toggle('active', c === card);
+        this.prefs.mode = card.dataset.mode;
+        this.savePrefs();
+      });
+    }
 
     // Single player Deploy button
     this._el.querySelector('#sp-deploy-btn').addEventListener('click', () => {
@@ -676,7 +674,7 @@ export class MenuManager {
     url.search = '';
     url.searchParams.set('server', this.prefs.server);
     url.searchParams.set('name', this.prefs.name);
-    url.searchParams.set('map', this.prefs.mode === 'teams' ? 'arena' : this.prefs.map);
+    url.searchParams.set('map', this.prefs.mode === 'dm' ? this.prefs.map : 'arena'); // team modes play the arena
     url.searchParams.set('mode', this.prefs.mode);
     url.searchParams.set('room', this.prefs.room);
 

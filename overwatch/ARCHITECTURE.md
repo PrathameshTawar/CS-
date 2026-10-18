@@ -68,6 +68,7 @@ export class MySystem {
 | `physics` | `src/physics/` | the client's `CollisionWorld` (`shared/collision.js`): raycasts, character controller collision; rigid bodies, ragdolls, penetration |
 | `player` | `src/player/` | camera feel, sprint/slide/mantle/lean, health; the movement step itself is `shared/movement.js` |
 | `weapons` | `src/weapons/` | the loadout (primary + pistol) and switching, weapon meshes, viewmodel rig, ADS and the sniper scope, recoil, sway, bob, draw/reload/inspect animation, ballistics. Combat clocks run on fixed steps, like the server's |
+| `bomb` | `src/bomb/` | Bomb Defusal on the client: the bomb model, plant/defuse bar and hints, beeps, the explosion (online only; the server runs the rules) |
 | `buy` | `src/buy/` | the buy menu (B), money and buy-time HUD; online it asks the server through `net` |
 | `fx` | `src/fx/` | GPU particles, muzzle flash, tracers, impacts, decals, smoke, blood, shells |
 | `ai` | `src/ai/` | enemy characters, navigation, perception, cover selection, combat behaviour |
@@ -91,6 +92,7 @@ functions, not a subsystem.
 | `shared/movement.js` | `createMoveState`, `stepMove`: one fixed step of walk/run/crouch/jump |
 | `shared/map.js` | `layoutRng(seed)`, and `buildColliders(seed)`, which runs the world headlessly in Node and returns its static colliders |
 | `shared/combat.js` | rifle constants, damage, the bullet trace (`traceShot`) and player hitboxes |
+| `shared/bomb.js` | Bomb Defusal numbers (plant/defuse/bomb times, radius, rewards) and `siteAt` |
 | `shared/weapons.js` | the weapon table (prices, fire rate, ammo, damage, spread, draw/reload times) and the round economy |
 | `shared/protocol.js` | the wire protocol: message shapes, rates, input validation, state packing |
 
@@ -149,6 +151,9 @@ Emit and listen via `ctx.events`. Payloads are plain objects. The canonical set:
 | `actor:death` | `{ actor, point, impulse }` | ai |
 | `actor:fire` | `{ origin, weapon? }` — another shooter fired (AI soldier, remote player) | ai, net |
 | `actor:footstep` | `{ position, running }` — another character's step | net |
+| `bomb:event` | `{ kind, player, name, site, byMe }` — planted / defused / exploded / dropped / picked up (protocol `BOMBEV_*`) | net |
+| `bomb:beep` | `{ position, urgent }` — the planted bomb's beep | bomb |
+| `match:halftime` | `{ attackers }` — teams switch sides | net |
 | `player:kill` | `{ killer, victim, headshot, weapon?, byMe, onMe }` (names; `killer: null` = fell off the map; `weapon` its display name) | net, player |
 
 `damage:dealt` semantics: `target` is who the damage lands ON. When an enemy

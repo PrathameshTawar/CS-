@@ -7,13 +7,14 @@
 //
 //   client -> server
 //     { t: 'hello', v, name, room, mode? }      first message, once; mode
-//                                               ('teams' | 'dm') applies when
-//                                               the hello creates the room
+//                                               ('bomb' | 'teams' | 'dm')
+//                                               applies when the hello
+//                                               creates the room
 //     { t: 'input', i: [[seq, f, r, flags, yaw, pitch], ...],
 //       f?: [[seq, ox, oy, oz, dx, dy, dz, viewTick], ...],   shots
 //       r?: [seq, ...],                                       reload starts
 //       w?: [[seq, slot], ...] }                              weapon switches
-//     { t: 'buy', w }                           buy weapon id w (shared/weapons.js)
+//     { t: 'buy', w }                           buy weapon or gear id w (shared/weapons.js)
 //     { t: 'sell', w }                          sell back weapon id w
 //     { t: 'ping', c }                          c: client clock (ms)
 //   server -> client
@@ -31,15 +32,20 @@
 // Snapshot: `ack` is the last input seq applied. `you` is the recipient's full
 // movement state (see packState) so the client can rewind to it and replay
 // unacknowledged inputs; `me` is [hp, dead, ammo, reserve, kills, deaths,
-// spawns, team, money, slot, primary, secondary, buy] where ammo/reserve
-// are the held weapon's, primary/secondary are [weaponId, ammo, reserve]
-// (primary null when empty) and buy is BUY_* flags. `players` holds every
+// spawns, team, money, slot, primary, secondary, buy, armor, helmet, kit,
+// useKind, useProgress] where ammo/reserve are the held weapon's,
+// primary/secondary are [weaponId, ammo, reserve] (primary null when empty),
+// buy is BUY_* flags, useKind is USE_* (planting or defusing right now) and
+// useProgress 0..1. `players` holds every
 // OTHER player as [id, x, y, z, yaw, pitch, flags, name, kills, deaths,
 // team, heldWeaponId]. `game` is [phase, phaseEndsTick, round, scoreAlpha,
-// scoreBravo, lastRoundWinner, roundsToWin, deathmatch, buyUntilTick]. `ev`
-// lists events since the recipient's last snapshot (EV_* below).
+// scoreBravo, lastRoundWinner, roundsToWin, deathmatch, buyUntilTick,
+// attackingTeam, bomb, mode] where bomb is [state (shared/bomb.js BOMB_*),
+// x, y, z, site, carrierId] or null outside Bomb Defusal (only attackers
+// are told where a carried bomb is, and by whom). `ev` lists events since
+// the recipient's last snapshot (EV_* below).
 
-export const PROTOCOL_VERSION = 4;
+export const PROTOCOL_VERSION = 5;
 export const TICK_RATE = 120; // server steps per second; equals the client's FIXED_STEP
 export const SNAPSHOT_EVERY = 6; // ticks between snapshots (20 Hz)
 export const INPUT_SEND_EVERY = 4; // client fixed steps per input batch (30 Hz)
@@ -54,6 +60,7 @@ export const IN_JUMP = 1;
 export const IN_CROUCH = 2;
 export const IN_SPRINT = 4;
 export const IN_ADS = 8;
+export const IN_USE = 16; // plant / defuse (held)
 
 // player flags in snapshots
 export const PL_CROUCH = 1;
@@ -63,10 +70,24 @@ export const PL_DEAD = 4;
 // combat events in snapshots
 export const EV_SHOT = 1; // [EV_SHOT, shooterId, ox, oy, oz, ex, ey, ez, weaponIndex]
 export const EV_HIT = 2; // [EV_HIT, shooterId, targetId, damage, headshot, x, y, z]
-export const EV_KILL = 3; // [EV_KILL, killerId (0: fell off the map), victimId, headshot, weaponIndex (-1: none)]
+export const EV_KILL = 3; // [EV_KILL, killerId (0: the world), victimId, headshot, weaponIndex (-1: fell, KILL_BY_BOMB: the bomb)]
 export const EV_SPAWN = 4; // [EV_SPAWN, playerId]
 export const EV_ROUND_END = 5; // [EV_ROUND_END, round, winnerTeam (-1 draw), reason]
 export const EV_MATCH_END = 6; // [EV_MATCH_END, winnerTeam]
+export const EV_BOMB = 7; // [EV_BOMB, BOMBEV_*, playerId (0: none), site]
+export const EV_HALFTIME = 8; // [EV_HALFTIME, attackingTeam]: teams switch sides
+
+export const KILL_BY_BOMB = -2;
+export const BOMBEV_PLANTED = 1;
+export const BOMBEV_DEFUSED = 2;
+export const BOMBEV_EXPLODED = 3;
+export const BOMBEV_DROPPED = 4;
+export const BOMBEV_PICKED = 5;
+
+// what a player is doing with the use key (snapshot `me`)
+export const USE_NONE = 0;
+export const USE_PLANT = 1;
+export const USE_DEFUSE = 2;
 
 // snapshot `me` buy flags
 export const BUY_OPEN = 1; // you can buy now (alive, buy time, in the buy zone)
@@ -77,6 +98,7 @@ export const BUY_SELL_SECONDARY = 8;
 // game modes (chosen by the hello that creates a room)
 export const MODE_TEAMS = 'teams';
 export const MODE_DM = 'dm';
+export const MODE_BOMB = 'bomb'; // Bomb Defusal (team rounds on a map with bomb sites)
 
 // teams (deathmatch players have team -1)
 export const TEAM_NAMES = ['ALPHA', 'BRAVO'];
@@ -92,6 +114,8 @@ export const PHASE_MATCH_END = 4; // match over, scoreboard up, frozen
 export const END_ELIMINATION = 0;
 export const END_TIME = 1;
 export const END_FORFEIT = 2; // a team emptied out
+export const END_BOMB = 3; // the bomb exploded
+export const END_DEFUSED = 4;
 
 export function encode(msg) {
   return JSON.stringify(msg);
@@ -121,7 +145,7 @@ export function readInput(raw) {
   const [seq, f, r, flags, yaw, pitch] = raw;
   if (!Number.isInteger(seq) || seq < 0) return null;
   if (!isAxis(f) || !isAxis(r)) return null;
-  if (!Number.isInteger(flags) || flags < 0 || flags > 15) return null;
+  if (!Number.isInteger(flags) || flags < 0 || flags > 31) return null;
   if (!isAngle(yaw) || !isAngle(pitch)) return null;
   return {
     seq,
@@ -131,6 +155,7 @@ export function readInput(raw) {
     crouch: (flags & IN_CROUCH) !== 0,
     sprint: (flags & IN_SPRINT) !== 0,
     ads: flags & IN_ADS ? 1 : 0,
+    use: (flags & IN_USE) !== 0,
     yaw,
     pitch: Math.max(-1.5, Math.min(1.5, pitch)),
   };
@@ -168,7 +193,8 @@ export function writeInput(seq, input, yaw, pitch) {
     (input.jump ? IN_JUMP : 0) |
     (input.crouch ? IN_CROUCH : 0) |
     (input.sprint ? IN_SPRINT : 0) |
-    (input.ads >= 0.3 ? IN_ADS : 0);
+    (input.ads >= 0.3 ? IN_ADS : 0) |
+    (input.use ? IN_USE : 0);
   return [seq, input.forward, input.right, flags, yaw, pitch];
 }
 

@@ -124,7 +124,8 @@ export class UiSystem {
       // multiplayer kills (net): every kill in the room, ours highlighted
       e.on('player:kill', (p) => {
         if (p.killer === null) {
-          this._feed(`${p.onMe ? 'YOU' : p.victim} FELL OFF THE MAP`, p.onMe);
+          const how = p.bomb ? (p.onMe ? 'WERE KILLED BY THE BOMB' : 'WAS KILLED BY THE BOMB') : 'FELL OFF THE MAP';
+          this._feed(`${p.onMe ? 'YOU' : p.victim} ${how}`, p.onMe);
           return;
         }
         const hs = p.headshot ? ' ✛' : '';

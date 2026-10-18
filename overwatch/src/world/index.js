@@ -641,6 +641,45 @@ export class WorldSystem {
     }
   }
 
+  // A bomb site marked on the ground: `site` is { min: [x, z], max: [x, z] }.
+  _siteMarker(name, site) {
+    const w = site.max[0] - site.min[0];
+    const d = site.max[1] - site.min[1];
+    const px = 64; // canvas pixels per metre
+    const c = document.createElement('canvas');
+    c.width = Math.round(w * px);
+    c.height = Math.round(d * px);
+    const g = c.getContext('2d');
+    const paint = 'rgba(232, 176, 58, 0.85)';
+    g.strokeStyle = paint;
+    g.lineWidth = 0.22 * px;
+    g.setLineDash([0.9 * px, 0.45 * px]);
+    g.strokeRect(g.lineWidth, g.lineWidth, c.width - 2 * g.lineWidth, c.height - 2 * g.lineWidth);
+    g.fillStyle = paint;
+    g.font = `900 ${Math.round(Math.min(w, d) * 0.55 * px)}px Impact, 'Arial Black', sans-serif`;
+    g.textAlign = 'center';
+    g.textBaseline = 'middle';
+    g.fillText(name, c.width / 2, c.height / 2);
+    const tex = new THREE.CanvasTexture(c);
+    tex.colorSpace = THREE.SRGBColorSpace;
+    tex.anisotropy = 4;
+    const mat = new THREE.MeshStandardMaterial({
+      map: tex,
+      transparent: true,
+      depthWrite: false,
+      roughness: 0.9,
+      polygonOffset: true,
+      polygonOffsetFactor: -2,
+    });
+    const mesh = new THREE.Mesh(this._geom(new THREE.PlaneGeometry(w, d)), mat);
+    mesh.rotation.x = -Math.PI / 2;
+    mesh.position.set((site.min[0] + site.max[0]) / 2, 0.02, (site.min[1] + site.max[1]) / 2);
+    mesh.receiveShadow = true;
+    mesh.name = `site-${name}`;
+    this.scene.add(mesh);
+    this._track(mesh);
+  }
+
   _buildArena() {
     const m = this.m;
     // Ground plane covering arena bounds
@@ -685,6 +724,9 @@ export class WorldSystem {
       this.scene.add(mesh);
       this._track(mesh);
     }
+
+    // Bomb sites: a painted border and a big stencilled letter on the ground
+    for (const [name, site] of Object.entries(ARENA.sites || {})) this._siteMarker(name, site);
 
     // Atmospheric lane point lights
     const lights = [
