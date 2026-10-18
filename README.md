@@ -23,7 +23,8 @@ npm test           # shared gameplay tests (Node built-in runner, no deps)
 Controls: click to lock the mouse, **WASD** move, **Shift** sprint, **Space**
 jump, **R** reload, **Q/E** lean, **F** interact, **G** use, **X** inspect,
 **1 / 2** or the **mouse wheel** switch between your main weapon and pistol,
-**B** opens the buy menu, **Esc** opens the game menu.
+**B** opens the buy menu, **F** (hold) plants or defuses the bomb, **Esc**
+opens the game menu.
 
 **Settings** (start menu tab, or Esc → Settings): mouse sensitivity, invert
 mouse Y, field of view, volume, graphics quality and an FPS overlay. They're
@@ -49,7 +50,7 @@ is not in a standard location) and a running dev server.
   diffs the two runs. It overwrites `shots/baseline/`, so don't commit those
   files after a gate run unless the visual change is intended.
 
-### Multiplayer (team rounds or deathmatch)
+### Multiplayer (Bomb Defusal, team rounds or deathmatch)
 
 ```bash
 cd overwatch
@@ -60,8 +61,27 @@ npm run dev          # in a second terminal
 
 Open `http://127.0.0.1:5173/?server=ws://localhost:8787&name=alice` in two
 windows (change `name`; add `&room=<name>` for a private room). Rooms play
-**team rounds** by default; add `&mode=dm` when creating a room for
-free-for-all deathmatch. Hold **Tab** for the scoreboard.
+**Bomb Defusal** on the arena by default; `&mode=teams` creates a room with
+elimination rounds instead, and `&mode=dm` free-for-all deathmatch. Hold
+**Tab** for the scoreboard.
+
+How Bomb Defusal works:
+1. The attacking team spawns at the south end of the arena and one of them
+   carries the bomb. Bomb sites **A** (west lane) and **B** (east lane) are
+   painted on the ground at the north end, where the defenders spawn.
+2. To plant, stand still on a site with the bomb and hold **F** for 3.2 s.
+   It explodes 40 s later, killing anyone within about 11 m.
+3. Defenders defuse by holding **F** next to it for 10 s, or 5 s with a
+   defuse kit ($400, defenders only). Moving or letting go starts it over.
+4. Attackers win if the bomb explodes or every defender dies. Defenders win
+   by defusing, by killing every attacker before a plant, or when time runs
+   out with no plant. Once the bomb is planted, killing the attackers isn't
+   enough: it still has to be defused.
+5. If the carrier dies the bomb drops; any attacker picks it up by walking
+   over it. Defenders aren't told who carries it.
+6. Planting pays $300 (and $800 to every attacker if they still lose);
+   defusing pays $300; a round won by the bomb or a defuse pays $3,500.
+7. After 7 rounds the teams switch sides; money and weapons reset.
 
 How a team match works:
 1. Players are auto-balanced into **ALPHA** (orange) and **BRAVO** (blue),
@@ -112,7 +132,13 @@ Works now:
   killed, and you hear their gunfire (each weapon sounds different) and
   footsteps from where they are.
 
-**Not yet:** a bomb objective, armour and grenades. Other players are drawn
+- Armour: Kevlar ($650) and Kevlar + Helmet ($1,000; $350 for the helmet
+  alone if your vest is full). Armour absorbs part of each hit, depending
+  on the weapon, and the helmet protects your head; you keep what's left
+  while you survive. A rifle headshot no longer kills through a helmet; the
+  sniper still kills with one body shot.
+
+**Not yet:** grenades. Other players are drawn
 holding a rifle whatever they carry (you still hear their real weapon).
 
 ### Hosting a match online

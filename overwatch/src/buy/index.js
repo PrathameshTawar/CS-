@@ -9,16 +9,20 @@
 // While the menu is open the mouse is released so you can click; 1-4 buy
 // too. B closes it and takes the mouse back; Esc just closes it.
 
-import { BUY_FREE, BUY_SELL_PRIMARY, BUY_SELL_SECONDARY, TICK_RATE } from '../../shared/protocol.js';
-import { PRIMARY, SECONDARY, WEAPONS } from '../../shared/weapons.js';
+import { BUY_FREE, BUY_SELL_PRIMARY, BUY_SELL_SECONDARY, MODE_BOMB, TICK_RATE } from '../../shared/protocol.js';
+import { EQUIPMENT, MAX_ARMOR, PRIMARY, SECONDARY, WEAPONS } from '../../shared/weapons.js';
 
-// menu rows, in key order
+// menu rows, in key order; gear (armour, the defuse kit) only online
 const ITEMS = [
   { id: 'heavy', group: 'PISTOLS' },
   { id: 'smg', group: 'SMGS' },
   { id: 'rifle', group: 'RIFLES' },
   { id: 'sniper', group: 'SNIPER RIFLES' },
+  { id: 'vest', group: 'GEAR', gear: true },
+  { id: 'vesthelm', group: 'GEAR', gear: true },
+  { id: 'kit', group: 'GEAR', gear: true },
 ];
+const defOf = (id) => WEAPONS[id] || EQUIPMENT[id];
 
 export class BuySystem {
   static id = 'buy';
@@ -40,9 +44,10 @@ export class BuySystem {
         return;
       }
       const n = /^Digit([1-9])$/.exec(e.code);
-      if (n && ITEMS[n[1] - 1]) {
+      const items = this._items();
+      if (n && items[n[1] - 1]) {
         e.preventDefault();
-        this._choose(ITEMS[n[1] - 1].id, false);
+        this._choose(items[n[1] - 1].id, false);
       }
     };
     document.addEventListener('keydown', this._onKey, true);
@@ -75,9 +80,26 @@ export class BuySystem {
     return net ? net.money : 0;
   }
 
+  // What's on sale to us: gear only online, the kit only to Bomb Defusal defenders.
+  _items() {
+    const net = this._net;
+    return ITEMS.filter((item) => {
+      if (!item.gear) return true;
+      if (!net) return false;
+      return item.id !== 'kit' || (net.mode === MODE_BOMB && net.team !== net.attackers);
+    });
+  }
+
+  // A helmet on top of a full vest costs the difference (as on the server).
+  _price(id) {
+    const net = this._net;
+    if (id === 'vesthelm' && net && net.armor >= MAX_ARMOR) return EQUIPMENT.vesthelm.price - EQUIPMENT.vest.price;
+    return defOf(id).price;
+  }
+
   _sellable(id) {
     const net = this._net;
-    if (!net) return false;
+    if (!net || !WEAPONS[id]) return false;
     const slot = WEAPONS[id].slot;
     const gun = this.weapons.loadout[slot];
     const flag = slot === PRIMARY ? BUY_SELL_PRIMARY : BUY_SELL_SECONDARY;
@@ -85,6 +107,10 @@ export class BuySystem {
   }
 
   _owned(id) {
+    const net = this._net;
+    if (id === 'vest') return !!net && net.armor >= MAX_ARMOR;
+    if (id === 'vesthelm') return !!net && net.armor >= MAX_ARMOR && net.helmet;
+    if (id === 'kit') return !!net && net.kit;
     const gun = this.weapons.loadout[WEAPONS[id].slot];
     return !!gun && gun.id === id;
   }
@@ -121,7 +147,7 @@ export class BuySystem {
       this.weapons.give(id);
       return;
     }
-    if (this.free || this.money >= WEAPONS[id].price) net.buy(id);
+    if (this.free || this.money >= this._price(id)) net.buy(id);
   }
 
   update(dt, ctx) {
@@ -168,15 +194,18 @@ export class BuySystem {
     const money = this.money;
     const free = this.free;
     const loadout = this.weapons.loadout;
-    const key = [money, free, net ? net.buyFlags : 0, loadout[PRIMARY] && loadout[PRIMARY].id, loadout[SECONDARY].id].join('|');
+    const gear = net ? [net.armor, net.helmet, net.kit, net.team, net.attackers, net.mode] : [];
+    const key = [money, free, net ? net.buyFlags : 0, loadout[PRIMARY] && loadout[PRIMARY].id, loadout[SECONDARY].id, ...gear].join('|');
     if (!force && key === this._key) return;
     this._key = key;
-    const rows = ITEMS.map((item, i) => {
-      const w = WEAPONS[item.id];
+    const items = this._items();
+    const rows = items.map((item, i) => {
+      const w = defOf(item.id);
       const owned = this._owned(item.id);
       const sellable = this._sellable(item.id);
-      const afford = free || money >= w.price;
-      const price = free ? 'FREE' : `$${w.price}`;
+      const cost = this._price(item.id);
+      const afford = free || money >= cost;
+      const price = free ? 'FREE' : `$${cost}`;
       const right = sellable
         ? `<span data-sell="${item.id}" style="cursor:pointer;color:#ffb35c;border:1px solid #ffb35c;border-radius:3px;padding:1px 6px">SELL +$${free ? 0 : w.price}</span>`
         : owned
@@ -184,7 +213,8 @@ export class BuySystem {
           : `<span style="color:${afford ? '#e6ebf2' : '#a55'}">${price}</span>`;
       const clickable = !owned && afford;
       return (
-        `<div style="color:#7f8ea3;font-size:11px;letter-spacing:1px;margin-top:${i ? 10 : 0}px">${item.group}</div>` +
+        (i && items[i - 1].group === item.group ? '<div style="height:4px"></div>' :
+          `<div style="color:#7f8ea3;font-size:11px;letter-spacing:1px;margin-top:${i ? 10 : 0}px">${item.group}</div>`) +
         `<div ${clickable ? `data-buy="${item.id}"` : ''} style="display:flex;justify-content:space-between;gap:24px;padding:6px 8px;` +
         `border-radius:4px;background:${owned ? 'rgba(80,140,90,.18)' : 'rgba(255,255,255,.05)'};` +
         `cursor:${clickable ? 'pointer' : 'default'};opacity:${afford || owned ? 1 : 0.55}">` +
@@ -196,7 +226,7 @@ export class BuySystem {
       `<b style="font-size:15px;letter-spacing:2px">BUY</b>` +
       `<span style="color:#7fe08a;font-size:15px">${free ? 'FREE' : `$${money}`}</span></div>` +
       rows.join('') +
-      `<div style="color:#7f8ea3;font-size:11px;margin-top:12px">Click or press 1–${ITEMS.length} · B to close and play</div>`;
+      `<div style="color:#7f8ea3;font-size:11px;margin-top:12px">Click or press 1–${items.length} · B to close and play</div>`;
   }
 
   // Money and the "press B" hint, online.
@@ -211,7 +241,9 @@ export class BuySystem {
         const left = Math.max(0, Math.ceil((net.buyUntil - net._lastSnap.tick) / TICK_RATE));
         timer = ` · ${left}s`;
       }
+      const gear = [net.armor > 0 ? `ARMOR ${net.armor}${net.helmet ? ' + HELMET' : ''}` : '', net.kit ? 'KIT' : ''].filter(Boolean).join(' · ');
       html =
+        (gear ? `<div style="color:#9fc4ff;font-size:12px">${gear}</div>` : '') +
         (free ? '' : `<div style="color:#7fe08a;font-size:18px">$${net.money}</div>`) +
         (can && !this.open ? `<div style="color:#ffd27a">B BUY${timer}</div>` : '');
     } else if (!net && !this.open && !this.player.dead) {

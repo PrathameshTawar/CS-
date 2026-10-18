@@ -72,6 +72,9 @@ export class AudioSystem {
       e.on('player:footstep', (p) => this.footstep(p.running, p.position)),
       // other shooters (AI soldiers, remote players): positioned gunfire/steps
       e.on('actor:fire', (p) => this.gunshot(p.origin, p.weapon)),
+      // Bomb Defusal
+      e.on('bomb:beep', (p) => this.bombBeep(p.position, p.urgent)),
+      e.on('bomb:event', (p) => this.bombEvent(p.kind)),
       e.on('actor:footstep', (p) => this.footstep(p.running, p.position)),
       e.on('player:land', (p) => this.land(p.velocity)),
       e.on('damage:taken', () => this.hurt()),
@@ -155,6 +158,27 @@ export class AudioSystem {
     this._tone(110 * v.pitch, 0.12 * v.len, 'sine', vol * 0.4);
     this._noise(0.03 * v.len, vol * 0.3, 3200 * v.pitch, 2, 0, s.pan);
     this._tone(180 * v.pitch, 0.06 * v.len, 'triangle', vol * 0.2);
+  }
+
+  bombBeep(position, urgent) {
+    if (!this.ac) return;
+    const s = this._spatial(position);
+    this._tone(urgent ? 2100 : 1700, 0.07, 'square', Math.max(0.05, s.gain) * 0.22);
+  }
+
+  // 1 planted, 2 defused, 3 exploded (protocol BOMBEV_*)
+  bombEvent(kind) {
+    if (!this.ac) return;
+    if (kind === 1) {
+      for (let i = 0; i < 3; i++) this._tone(1500, 0.06, 'square', 0.18, i * 0.12);
+    } else if (kind === 2) {
+      this._tone(880, 0.12, 'sine', 0.25);
+      this._tone(1320, 0.18, 'sine', 0.22, 0.12);
+    } else if (kind === 3) {
+      this._noise(1.6, 1.0, 180, 0.6);
+      this._noise(0.5, 0.7, 900, 0.8);
+      this._tone(48, 1.2, 'sine', 0.9);
+    }
   }
 
   reload(phase) {

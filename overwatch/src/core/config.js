@@ -120,8 +120,9 @@ export function resolveConfig() {
     server: url.searchParams.get('server') || null,
     room: url.searchParams.get('room') || 'public',
     playerName: url.searchParams.get('name') || 'player',
-    // a new room's mode: 'teams' (rounds, default) or 'dm' (free-for-all)
-    mode: url.searchParams.get('mode') === 'dm' ? 'dm' : 'teams',
+    // a new room's mode: 'bomb' (Bomb Defusal, default; team rounds on a
+    // map without bomb sites), 'teams' (elimination rounds) or 'dm'
+    mode: ['dm', 'teams'].includes(url.searchParams.get('mode')) ? url.searchParams.get('mode') : 'bomb',
     // map: 'plaza' (default for single player) or 'arena' (competitive 3-lane)
     map: (url.searchParams.get('map') || 'plaza').toLowerCase(),
   };

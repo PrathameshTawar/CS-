@@ -32,6 +32,13 @@
 //   the match; MATCH_END shows the result, then a new match starts.
 // - Late joiners sit out (dead) until the next round starts.
 //
+// Bomb Defusal (mode 'bomb', maps with bomb sites; shared/bomb.js has the
+// numbers): the same rounds, but the attacking team (game.attackers) spawns
+// at the map's +Z end and must plant the bomb on a site; the defenders win
+// by defusing it, by killing every attacker before a plant, or when time
+// runs out with no plant. After a plant, only the bomb (or wiping out the
+// defenders) ends the round. Teams swap sides at halftime.
+//
 // Weapons and money (shared/weapons.js has the table and the rules):
 // - Each player carries a primary (or none) and a secondary, each with its
 //   own ammo, and holds one of them. Switches ride the input stream like
@@ -42,6 +49,26 @@
 //   anywhere. Kills and round results pay out at the end of each event.
 
 import { CollisionWorld } from '../shared/collision.js';
+import { createRng } from '../shared/rng.js';
+import {
+  BOMB_CARRIED,
+  BOMB_DEFUSED,
+  BOMB_DROPPED,
+  BOMB_EXPLODED,
+  BOMB_PLANTED,
+  BOMB_TIME,
+  BOMB_WIN_REWARD,
+  DEFUSE_RADIUS,
+  DEFUSE_REWARD,
+  DEFUSE_TIME,
+  KIT_DEFUSE_TIME,
+  PICKUP_RADIUS,
+  PLANT_LOSS_BONUS,
+  PLANT_REWARD,
+  PLANT_TIME,
+  bombDamage,
+  siteAt,
+} from '../shared/bomb.js';
 import { KILL_Y, createMoveState, stepMove } from '../shared/movement.js';
 import {
   MAX_HEALTH,
@@ -54,6 +81,9 @@ import {
 import {
   BUY_RADIUS,
   BUY_TIME,
+  EQUIPMENT,
+  MAX_ARMOR,
+  applyArmor,
   DEFAULT_PRIMARY,
   DEFAULT_SECONDARY,
   MAX_MONEY,
@@ -73,9 +103,18 @@ import {
   BUY_OPEN,
   BUY_SELL_PRIMARY,
   BUY_SELL_SECONDARY,
+  BOMBEV_DEFUSED,
+  BOMBEV_DROPPED,
+  BOMBEV_EXPLODED,
+  BOMBEV_PICKED,
+  BOMBEV_PLANTED,
+  END_BOMB,
+  END_DEFUSED,
   END_ELIMINATION,
   END_FORFEIT,
   END_TIME,
+  EV_BOMB,
+  EV_HALFTIME,
   EV_HIT,
   EV_KILL,
   EV_MATCH_END,
@@ -86,6 +125,8 @@ import {
   MAX_PLAYERS_PER_ROOM,
   MAX_REWIND_TICKS,
   MAX_SHOTS_PER_MESSAGE,
+  KILL_BY_BOMB,
+  MODE_BOMB,
   MODE_DM,
   MODE_TEAMS,
   PHASE_END,
@@ -97,6 +138,9 @@ import {
   PL_DEAD,
   PL_GROUNDED,
   TICK_RATE,
+  USE_DEFUSE,
+  USE_NONE,
+  USE_PLANT,
   packState,
   readInput,
   readShot,
@@ -144,6 +188,12 @@ export const DEFAULT_RULES = Object.freeze({
   matchEndTicks: 10 * TICK_RATE,
   roundsToWin: 8,
   buyTicks: BUY_TIME * TICK_RATE, // after the freeze ends
+  // Bomb Defusal
+  plantTicks: Math.round(PLANT_TIME * TICK_RATE),
+  defuseTicks: DEFUSE_TIME * TICK_RATE,
+  kitDefuseTicks: KIT_DEFUSE_TIME * TICK_RATE,
+  bombTicks: BOMB_TIME * TICK_RATE,
+  halftime: true, // swap sides after roundsToWin - 1 rounds
 });
 const SPAWN_HEIGHT = 60;
 const IDLE = Object.freeze({ forward: 0, right: 0, jump: false, crouch: false, sprint: false, ads: 0 });
@@ -157,9 +207,23 @@ export class Room {
     this.teamSpawns = mapData && mapData.spawns ? mapData.spawns : TEAM_SPAWNS;
     this.spawns = mapData && mapData.spawns ? [...mapData.spawns[0], ...mapData.spawns[1]] : SPAWNS;
     this.maxPlayers = maxPlayers;
-    this.mode = mode === MODE_DM ? MODE_DM : MODE_TEAMS;
+    this.sites = (mapData && mapData.sites) || null;
+    // Bomb Defusal needs bomb sites; without them it's team elimination
+    this.mode = mode === MODE_DM ? MODE_DM : mode === MODE_BOMB && this.sites ? MODE_BOMB : MODE_TEAMS;
     this.rules = { ...DEFAULT_RULES, ...rules };
-    this.game = { phase: PHASE_WARMUP, endsAt: 0, round: 0, score: [0, 0], lastWinner: -1, buyUntil: 0, lossStreak: [0, 0] };
+    this.game = {
+      phase: PHASE_WARMUP,
+      endsAt: 0,
+      round: 0,
+      score: [0, 0],
+      lastWinner: -1,
+      buyUntil: 0,
+      lossStreak: [0, 0],
+      attackers: 0, // the team that spawns at +Z (and carries the bomb)
+      bomb: null, // Bomb Defusal: { state, carrier, x, y, z, site, explodeAt, defuser, planted }
+      halfDone: false,
+    };
+    this._rng = createRng(((seed || 1) ^ 0xb0b5) >>> 0); // who carries the bomb
     this.world = new CollisionWorld(colliders);
     this.players = new Map();
     this.tick = 0;
@@ -203,7 +267,12 @@ export class Room {
       drawEnd: 0, // the held weapon can fire from this step on
       kills: 0,
       deaths: 0,
-      team: this.mode === MODE_TEAMS ? this._smallerTeam() : -1,
+      team: this.mode !== MODE_DM ? this._smallerTeam() : -1,
+      armor: 0,
+      helmet: false,
+      kit: false,
+      useKind: USE_NONE, // planting or defusing
+      useSteps: 0,
       rejected: 0, // shots refused (rate, ammo, origin): a cheat signal
       eventsSeen: this._eventN,
       history,
@@ -225,7 +294,7 @@ export class Room {
     this._place(player, x, z);
     // mid-round joiners sit out until the next round
     const phase = this.game.phase;
-    if (this.mode === MODE_TEAMS && (phase === PHASE_LIVE || phase === PHASE_END || phase === PHASE_MATCH_END)) {
+    if (this.mode !== MODE_DM && (phase === PHASE_LIVE || phase === PHASE_END || phase === PHASE_MATCH_END)) {
       player.dead = true;
       player.hp = 0;
       player.respawnTick = Infinity;
@@ -262,6 +331,8 @@ export class Room {
   }
 
   leave(id) {
+    const p = this.players.get(id);
+    if (p) this._dropIfCarrier(p);
     return this.players.delete(id);
   }
 
@@ -332,6 +403,7 @@ export class Room {
           this._kill(p, null, false); // fell off the map
           continue;
         }
+        if (this.mode === MODE_BOMB) this._bombUse(p, input);
         if (p.reloadStart >= 0) {
           const gun = p.gun;
           const timing = TIMING[gun.id];
@@ -346,7 +418,8 @@ export class Room {
       }
       if (p.dead && this.respawning && this.tick >= p.respawnTick) this._respawn(p);
     }
-    if (this.mode === MODE_TEAMS) this._updateMatch();
+    if (this.mode === MODE_BOMB) this._updateBomb();
+    if (this.mode !== MODE_DM) this._updateMatch();
     for (const p of this.players.values()) this._record(p);
     this._trimEvents();
   }
@@ -376,6 +449,14 @@ export class Room {
             g.phase = PHASE_LIVE;
             g.endsAt = this.tick + r.roundTicks;
           }
+        } else if (this.mode === MODE_BOMB) {
+          const att = g.attackers;
+          const def = 1 - att;
+          const planted = g.bomb && g.bomb.state === BOMB_PLANTED;
+          if (alive[def] === 0) this._endRound(att, END_ELIMINATION);
+          else if (alive[att] === 0 && !planted) this._endRound(def, END_ELIMINATION);
+          else if (!planted && this.tick >= g.endsAt) this._endRound(def, END_TIME);
+          // once planted, the bomb ends the round (_updateBomb)
         } else if (alive[0] === 0 || alive[1] === 0) {
           this._endRound(alive[0] > 0 ? 0 : alive[1] > 0 ? 1 : -1, END_ELIMINATION);
         } else if (this.tick >= g.endsAt) {
@@ -389,7 +470,11 @@ export class Room {
           g.phase = PHASE_MATCH_END;
           g.endsAt = this.tick + r.matchEndTicks;
           this._emit([EV_MATCH_END, g.score[0] > g.score[1] ? 0 : 1]);
-        } else this._startRound(g.round + 1);
+        } else {
+          const half = Math.max(1, r.roundsToWin - 1);
+          if (this.mode === MODE_BOMB && r.halftime && !g.halfDone && g.round >= half) this._halftime();
+          this._startRound(g.round + 1);
+        }
         break;
       case PHASE_MATCH_END:
         if (this.tick < g.endsAt) break;
@@ -403,13 +488,33 @@ export class Room {
     this.game.score = [0, 0];
     this.game.lastWinner = -1;
     this.game.lossStreak = [0, 0];
+    this.game.attackers = 0;
+    this.game.halfDone = false;
     for (const p of this.players.values()) {
       p.kills = 0;
       p.deaths = 0;
-      p.money = START_MONEY;
-      p.dead = true; // everyone starts the match on the free pistol
+      this._resetEconomy(p);
     }
     this._startRound(1);
+  }
+
+  // A fresh start for p's money and gear (match start, halftime).
+  _resetEconomy(p) {
+    p.money = START_MONEY;
+    p.armor = 0;
+    p.helmet = false;
+    p.kit = false;
+    p.dead = true; // the next round starts p on the free pistol
+  }
+
+  // Halftime in Bomb Defusal: the teams swap sides; money and gear reset.
+  _halftime() {
+    const g = this.game;
+    g.halfDone = true;
+    g.attackers = 1 - g.attackers;
+    g.lossStreak = [0, 0];
+    for (const p of this.players.values()) this._resetEconomy(p);
+    this._emit([EV_HALFTIME, g.attackers]);
   }
 
   // Everyone to their team spawns, full health and ammo, frozen briefly.
@@ -423,25 +528,36 @@ export class Room {
     const used = [0, 0];
     for (const p of this.players.values()) {
       if (p.dead) p.loadout = [null, makeGun(DEFAULT_SECONDARY)];
-      const spawns = this.teamSpawns[p.team];
+      const spawns = this._sideSpawns(p.team);
       const [x, z] = spawns[used[p.team]++ % spawns.length];
       this._revive(p, x, z);
     }
+    if (this.mode === MODE_BOMB) this._giveBomb();
+  }
+
+  // Attackers spawn on the +Z side (teamSpawns[0]), defenders on -Z. Outside
+  // Bomb Defusal the attackers are always team 0, so each team keeps its side.
+  _sideSpawns(team) {
+    return this.teamSpawns[team === this.game.attackers ? 0 : 1];
   }
 
   _endRound(winner, reason) {
     const g = this.game;
+    const pay = [LOSS_REWARD, LOSS_REWARD]; // a draw
     if (winner >= 0) {
       g.score[winner]++;
       const loser = 1 - winner;
       g.lossStreak[winner] = 0;
       g.lossStreak[loser]++;
-      const pay = [0, 0];
-      pay[winner] = WIN_REWARD;
+      pay[winner] = reason === END_BOMB || reason === END_DEFUSED ? BOMB_WIN_REWARD : WIN_REWARD;
       pay[loser] = lossReward(g.lossStreak[loser]);
-      for (const p of this.players.values()) this._pay(p, pay[p.team]);
-    } else {
-      for (const p of this.players.values()) this._pay(p, LOSS_REWARD);
+    }
+    // attackers who planted but still lost get a bonus
+    if (g.bomb && g.bomb.planted && winner !== g.attackers) pay[g.attackers] += PLANT_LOSS_BONUS;
+    for (const p of this.players.values()) {
+      this._pay(p, pay[p.team]);
+      p.useKind = USE_NONE;
+      p.useSteps = 0;
     }
     g.lastWinner = winner;
     g.phase = PHASE_END;
@@ -456,6 +572,8 @@ export class Room {
     g.round = 0;
     g.score = [0, 0];
     g.lastWinner = -1;
+    g.bomb = null;
+    g.attackers = 0;
     for (const p of this.players.values()) if (p.dead) p.respawnTick = this.tick;
   }
 
@@ -473,7 +591,7 @@ export class Room {
     const g = this.game;
     if (!(g.phase === PHASE_FREEZE || g.phase === PHASE_LIVE) || this.tick >= g.buyUntil) return false;
     const pos = p.move.pos;
-    return this.teamSpawns[p.team].some(([x, z]) => Math.hypot(pos.x - x, pos.z - z) <= BUY_RADIUS);
+    return this._sideSpawns(p.team).some(([x, z]) => Math.hypot(pos.x - x, pos.z - z) <= BUY_RADIUS);
   }
 
   // Buys weapon `weaponId` into its slot. Returns true, or why not. A weapon
@@ -481,6 +599,7 @@ export class Room {
   buy(id, weaponId) {
     const p = this.players.get(id);
     if (!p) return 'no-player';
+    if (typeof weaponId === 'string' && Object.hasOwn(EQUIPMENT, weaponId)) return this._buyGear(p, EQUIPMENT[weaponId]);
     if (typeof weaponId !== 'string' || !Object.hasOwn(WEAPONS, weaponId)) return 'bad-weapon';
     const w = WEAPONS[weaponId];
     if (w.price <= 0) return 'not-for-sale';
@@ -497,6 +616,31 @@ export class Room {
     gun.prev = cur && cur.bought ? cur.prev : cur; // what selling it gives back
     p.loadout[w.slot] = gun;
     if (p.slot === w.slot) this._draw(p);
+    return true;
+  }
+
+  // Armour and the defuse kit. A helmet on top of a full vest costs the
+  // difference. Gear isn't sold back.
+  _buyGear(p, item) {
+    if (!this.canBuy(p)) return 'cannot-buy';
+    let price = item.price;
+    if (item.id === 'kit') {
+      if (this.mode !== MODE_BOMB || p.team === this.game.attackers) return 'not-for-sale';
+      if (p.kit) return 'owned';
+    } else if (item.id === 'vest') {
+      if (p.armor >= MAX_ARMOR) return 'owned';
+    } else {
+      if (p.armor >= MAX_ARMOR && p.helmet) return 'owned';
+      if (p.armor >= MAX_ARMOR) price = EQUIPMENT.vesthelm.price - EQUIPMENT.vest.price;
+    }
+    const cost = this.freeBuy ? 0 : price;
+    if (p.money < cost) return 'no-money';
+    p.money -= cost;
+    if (item.id === 'kit') p.kit = true;
+    else {
+      p.armor = MAX_ARMOR;
+      if (item.id === 'vesthelm') p.helmet = true;
+    }
     return true;
   }
 
@@ -595,24 +739,153 @@ export class Room {
 
     const target = hit.box.owner;
     const headshot = isHeadshot(hit.box, hit.point.y);
-    const damage = headshot ? w.head : w.body;
+    const hitArmor = applyArmor(headshot ? w.head : w.body, w.armorPen, target.armor, target.helmet, headshot);
+    const damage = hitArmor.health;
+    target.armor -= hitArmor.armor;
+    if (target.armor <= 0) target.helmet = false;
     target.hp = Math.max(0, target.hp - damage);
     this._emit([EV_HIT, p.id, target.id, damage, headshot ? 1 : 0, r3(hit.point.x), r3(hit.point.y), r3(hit.point.z)]);
     if (target.hp === 0) this._kill(target, p, headshot, gun.id);
   }
 
   // `killer` null means the world (fell off the map): a death, no kill credit.
+  // `weaponId` 'bomb': killed by the explosion.
   _kill(target, killer, headshot, weaponId = null) {
     target.hp = 0;
     target.dead = true;
     target.respawnTick = this.respawning ? this.tick + RESPAWN_TICKS : Infinity;
     target.reloadStart = -1;
     target.deaths++;
+    // the dead lose their gear, and drop the bomb
+    target.armor = 0;
+    target.helmet = false;
+    target.kit = false;
+    target.useKind = USE_NONE;
+    target.useSteps = 0;
+    this._dropIfCarrier(target);
     if (killer) {
       killer.kills++;
       if (weaponId) this._pay(killer, WEAPONS[weaponId].killReward);
     }
-    this._emit([EV_KILL, killer ? killer.id : 0, target.id, headshot ? 1 : 0, weaponId ? weaponIndex(weaponId) : -1]);
+    const how = weaponId === 'bomb' ? KILL_BY_BOMB : weaponId ? weaponIndex(weaponId) : -1;
+    this._emit([EV_KILL, killer ? killer.id : 0, target.id, headshot ? 1 : 0, how]);
+  }
+
+  // ---- the bomb ----
+
+  // Round start: a random attacker carries it.
+  _giveBomb() {
+    const g = this.game;
+    const attackers = [...this.players.values()].filter((p) => p.team === g.attackers && !p.dead);
+    if (!attackers.length) {
+      g.bomb = null;
+      return;
+    }
+    const carrier = attackers[this._rng.nextUint32() % attackers.length];
+    g.bomb = { state: BOMB_CARRIED, carrier: carrier.id, x: 0, y: 0, z: 0, site: '', explodeAt: 0, defuser: 0, planted: false };
+  }
+
+  _dropIfCarrier(p) {
+    const b = this.game.bomb;
+    if (!b || b.state !== BOMB_CARRIED || b.carrier !== p.id) return;
+    const pos = p.move.pos;
+    b.state = BOMB_DROPPED;
+    b.carrier = 0;
+    b.x = pos.x;
+    b.y = Math.max(pos.y, KILL_Y + 1); // fell off the map: it stays reachable-ish
+    b.z = pos.z;
+    this._emit([EV_BOMB, BOMBEV_DROPPED, p.id, '']);
+  }
+
+  // Use held by p this input step: plant (the carrier, standing still in a
+  // site) or defuse (a defender, standing still beside the planted bomb).
+  // Moving, jumping or letting go starts it over.
+  _bombUse(p, input) {
+    const g = this.game;
+    const b = g.bomb;
+    const still = input.use && input.forward === 0 && input.right === 0 && !input.jump && p.move.grounded;
+    const pos = p.move.pos;
+    if (!b || g.phase !== PHASE_LIVE || !still) {
+      this._stopUse(p);
+      return;
+    }
+    if (p.team === g.attackers) {
+      const site = b.state === BOMB_CARRIED && b.carrier === p.id ? siteAt(this.sites, pos.x, pos.z) : null;
+      if (!site) return this._stopUse(p);
+      if (p.useKind !== USE_PLANT) {
+        p.useKind = USE_PLANT;
+        p.useSteps = 0;
+      }
+      if (++p.useSteps >= this.rules.plantTicks) this._plant(p, site);
+      return;
+    }
+    const near = b.state === BOMB_PLANTED && Math.hypot(pos.x - b.x, pos.z - b.z) <= DEFUSE_RADIUS && Math.abs(pos.y - b.y) < 2;
+    if (!near || (b.defuser && b.defuser !== p.id)) return this._stopUse(p);
+    if (p.useKind !== USE_DEFUSE) {
+      p.useKind = USE_DEFUSE;
+      p.useSteps = 0;
+      b.defuser = p.id;
+    }
+    if (++p.useSteps >= (p.kit ? this.rules.kitDefuseTicks : this.rules.defuseTicks)) this._defuse(p);
+  }
+
+  _stopUse(p) {
+    const b = this.game.bomb;
+    if (b && b.defuser === p.id) b.defuser = 0;
+    p.useKind = USE_NONE;
+    p.useSteps = 0;
+  }
+
+  _plant(p, site) {
+    const g = this.game;
+    const b = g.bomb;
+    const pos = p.move.pos;
+    Object.assign(b, { state: BOMB_PLANTED, carrier: 0, x: pos.x, y: pos.y, z: pos.z, site, planted: true });
+    b.explodeAt = this.tick + this.rules.bombTicks;
+    g.endsAt = b.explodeAt; // the round clock becomes the bomb's
+    this._stopUse(p);
+    this._pay(p, PLANT_REWARD);
+    this._emit([EV_BOMB, BOMBEV_PLANTED, p.id, site]);
+  }
+
+  _defuse(p) {
+    const b = this.game.bomb;
+    b.state = BOMB_DEFUSED;
+    this._stopUse(p);
+    this._pay(p, DEFUSE_REWARD);
+    this._emit([EV_BOMB, BOMBEV_DEFUSED, p.id, b.site]);
+    this._endRound(1 - this.game.attackers, END_DEFUSED);
+  }
+
+  // Each tick: pick-ups of a dropped bomb, and the explosion.
+  _updateBomb() {
+    const g = this.game;
+    const b = g.bomb;
+    if (!b || g.phase !== PHASE_LIVE) return;
+    if (b.state === BOMB_DROPPED) {
+      for (const p of this.players.values()) {
+        if (p.dead || p.team !== g.attackers) continue;
+        const pos = p.move.pos;
+        if (Math.hypot(pos.x - b.x, pos.z - b.z) <= PICKUP_RADIUS && Math.abs(pos.y - b.y) < 2) {
+          b.state = BOMB_CARRIED;
+          b.carrier = p.id;
+          this._emit([EV_BOMB, BOMBEV_PICKED, p.id, '']);
+          break;
+        }
+      }
+    } else if (b.state === BOMB_PLANTED && this.tick >= b.explodeAt) {
+      b.state = BOMB_EXPLODED;
+      this._emit([EV_BOMB, BOMBEV_EXPLODED, 0, b.site]);
+      for (const p of this.players.values()) {
+        if (p.dead) continue;
+        const pos = p.move.pos;
+        const damage = bombDamage(Math.hypot(pos.x - b.x, pos.y + 0.9 - b.y, pos.z - b.z));
+        if (damage <= 0) continue;
+        p.hp = Math.max(0, p.hp - damage);
+        if (p.hp === 0) this._kill(p, null, false, 'bomb');
+      }
+      this._endRound(g.attackers, END_BOMB);
+    }
   }
 
   // Positions `p.hitbox` where p was at `tick` (interpolated). False if p was
@@ -659,7 +932,7 @@ export class Room {
   // The spawn (from the player's team side, or anywhere in deathmatch)
   // farthest from every living opponent.
   _spawnPoint(p) {
-    const spawns = p.team >= 0 ? this.teamSpawns[p.team] : this.spawns;
+    const spawns = p.team >= 0 ? this._sideSpawns(p.team) : this.spawns;
     let best = spawns[0];
     let bestD = -1;
     for (const s of spawns) {
@@ -718,9 +991,31 @@ export class Room {
     );
   }
 
-  _gameState() {
+  _useProgress(p) {
+    if (p.useKind === USE_NONE) return 0;
+    const need = p.useKind === USE_PLANT ? this.rules.plantTicks : p.kit ? this.rules.kitDefuseTicks : this.rules.defuseTicks;
+    return Math.round((p.useSteps / need) * 100) / 100;
+  }
+
+  // The bomb as `viewer` may know it: defenders aren't told who carries it.
+  _bombFor(viewer) {
+    const b = this.game.bomb;
+    if (!b) return null;
+    if (b.state === BOMB_CARRIED) {
+      if (viewer.team !== this.game.attackers) return [BOMB_CARRIED, 0, 0, 0, '', 0];
+      const c = this.players.get(b.carrier);
+      const pos = c ? c.move.pos : b;
+      return [BOMB_CARRIED, r3(pos.x), r3(pos.y), r3(pos.z), '', b.carrier];
+    }
+    return [b.state, r3(b.x), r3(b.y), r3(b.z), b.site, 0];
+  }
+
+  _gameState(viewer) {
     const g = this.game;
-    return [g.phase, g.endsAt, g.round, g.score[0], g.score[1], g.lastWinner, this.rules.roundsToWin, this.mode === MODE_DM ? 1 : 0, g.buyUntil];
+    return [
+      g.phase, g.endsAt, g.round, g.score[0], g.score[1], g.lastWinner, this.rules.roundsToWin, this.mode === MODE_DM ? 1 : 0, g.buyUntil,
+      g.attackers, this._bombFor(viewer), this.mode,
+    ];
   }
 
   // Snapshot for one recipient: their exact state, their combat status,
@@ -760,9 +1055,10 @@ export class Room {
       me: [
         me.hp, me.dead ? 1 : 0, me.ammo, me.reserve, me.kills, me.deaths, me.spawns, me.team,
         me.money, me.slot, packGun(me.loadout[PRIMARY]), packGun(me.loadout[SECONDARY]), this._buyFlags(me),
+        me.armor, me.helmet ? 1 : 0, me.kit ? 1 : 0, me.useKind, this._useProgress(me),
       ],
       players,
-      game: this._gameState(),
+      game: this._gameState(me),
       ev,
     };
   }

@@ -17,6 +17,7 @@ import { FxSystem } from './fx/index.js';
 import { PlayerSystem } from './player/index.js';
 import { WeaponSystem } from './weapons/index.js';
 import { BuySystem } from './buy/index.js';
+import { BombSystem } from './bomb/index.js';
 import { AiSystem } from './ai/index.js';
 import { AudioSystem } from './audio/index.js';
 import { UiSystem } from './ui/index.js';
@@ -47,6 +48,7 @@ async function boot() {
       new PlayerSystem(),
       new WeaponSystem(),
       new BuySystem(),
+      new BombSystem(),
       // multiplayer replaces the AI squad (their damage is client-side only)
       ...(online ? [] : [new AiSystem()]),
       new AudioSystem(),

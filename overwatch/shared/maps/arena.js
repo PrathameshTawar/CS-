@@ -9,11 +9,20 @@
 // - B-Lane (East, x > 8): Tight corridor chicanes and interior partitions.
 // - Connectors link A<->Mid and Mid<->B at z = ±12.
 // - Spawns: ALPHA (+Z) vs BRAVO (-Z), 5v5 spawn points with zero sightlines.
+//   In Bomb Defusal the attackers spawn at +Z and the defenders at -Z.
+// - Bomb sites (Bomb Defusal): A at the north end of A-Lane, B at the north
+//   end of B-Lane, both on the defenders' half.
 
 export const ARENA = {
   id: 'arena',
   name: 'Arena',
   bounds: [-20, 20, -32, 32], // [minX, maxX, minZ, maxZ]
+
+  // bomb site areas on the ground: { min: [x, z], max: [x, z] }
+  sites: {
+    A: { min: [-20, -22], max: [-8, -12] },
+    B: { min: [8, -22], max: [20, -11] },
+  },
 
   spawns: [
     // ALPHA (team 0, +Z)

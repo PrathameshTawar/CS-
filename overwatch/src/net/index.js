@@ -26,15 +26,24 @@ import { WEAPONS, WEAPON_IDS } from '../../shared/weapons.js';
 import { createSoldier, disposeSoldier, poseSoldier } from '../characters/soldier.js';
 import { HALF, HALF_Y_CROUCH, stepMove } from '../../shared/movement.js';
 import {
+  BOMBEV_DEFUSED,
+  BOMBEV_EXPLODED,
+  BOMBEV_PLANTED,
   BUY_OPEN,
+  END_BOMB,
+  END_DEFUSED,
   END_ELIMINATION,
   END_FORFEIT,
+  EV_BOMB,
+  EV_HALFTIME,
   EV_HIT,
   EV_KILL,
   EV_MATCH_END,
   EV_ROUND_END,
   EV_SHOT,
   INPUT_SEND_EVERY,
+  KILL_BY_BOMB,
+  MODE_BOMB,
   PHASE_END,
   PHASE_FREEZE,
   PHASE_LIVE,
@@ -86,7 +95,7 @@ export class NetSystem {
     // pending inputs: ring of preallocated slots (no per-step allocation)
     this._pending = [];
     for (let i = 0; i < PENDING_MAX; i++) {
-      this._pending.push({ seq: -1, yaw: 0, input: { forward: 0, right: 0, jump: false, crouch: false, sprint: false, ads: 0 } });
+      this._pending.push({ seq: -1, yaw: 0, input: { forward: 0, right: 0, jump: false, crouch: false, sprint: false, ads: 0, use: false } });
     }
     this._head = 0; // next slot to write
     this._count = 0;
@@ -97,6 +106,16 @@ export class NetSystem {
     this._switches = [];
     this.money = 0;
     this.buyFlags = 0; // BUY_* from the last snapshot
+    // Bomb Defusal (src/bomb draws it): our gear and use progress, the
+    // attacking team and the bomb as the server tells us
+    this.armor = 0;
+    this.helmet = false;
+    this.kit = false;
+    this.useKind = 0;
+    this.useProgress = 0;
+    this.attackers = 0;
+    this.bomb = null; // [state, x, y, z, site, carrierId]
+    this.mode = null;
     this._snap = null; // newest snapshot not yet reconciled against
     this._buffer = []; // recent snapshots for interpolation
     this._tickOffset = null; // server tick - local tick estimate
@@ -284,7 +303,8 @@ export class NetSystem {
         const weapon = WEAPON_IDS[weaponIdx];
         if (killer === me) e.emit('damage:dealt', { target: { remoteId: victim }, amount: 0, headshot: headshot === 1, killed: true, point: null });
         e.emit('player:kill', {
-          killer: killer === 0 ? null : this._nameOf(killer), // null: fell off the map
+          killer: killer === 0 ? null : this._nameOf(killer), // null: the world (see bomb)
+          bomb: weaponIdx === KILL_BY_BOMB, // the explosion; otherwise null killer = fell off the map
           victim: this._nameOf(victim),
           headshot: headshot === 1,
           weapon: weapon ? WEAPONS[weapon].name : null,
@@ -293,17 +313,38 @@ export class NetSystem {
         });
       } else if (type === EV_ROUND_END) {
         const [, , winner, reason] = ev;
-        const why = reason === END_ELIMINATION ? 'ELIMINATION' : reason === END_FORFEIT ? 'FORFEIT' : 'TIME';
+        const why =
+          reason === END_ELIMINATION ? 'ELIMINATION' :
+          reason === END_FORFEIT ? 'FORFEIT' :
+          reason === END_BOMB ? 'BOMB EXPLODED' :
+          reason === END_DEFUSED ? 'BOMB DEFUSED' : 'TIME';
         this._banner = winner < 0 ? 'ROUND DRAW' : `${TEAM_NAMES[winner]} WINS THE ROUND · ${why}`;
       } else if (type === EV_MATCH_END) {
         this._banner = `${TEAM_NAMES[ev[1]]} WINS THE MATCH`;
+      } else if (type === EV_BOMB) {
+        const [, kind, player, site] = ev;
+        if (kind === BOMBEV_PLANTED) this._banner = `BOMB PLANTED AT ${site}`;
+        else if (kind === BOMBEV_DEFUSED) this._banner = 'BOMB DEFUSED';
+        else if (kind === BOMBEV_EXPLODED) this._banner = 'BOMB EXPLODED';
+        e.emit('bomb:event', { kind, player, name: player ? this._nameOf(player) : null, site, byMe: player === me });
+      } else if (type === EV_HALFTIME) {
+        this._banner = 'HALFTIME · SWITCHING SIDES';
+        e.emit('match:halftime', { attackers: ev[1] });
       }
     }
 
-    const [hp, dead, , , kills, deaths, spawns, team, money, slot, primary, secondary, buyFlags] = msg.me;
+    const [hp, dead, , , kills, deaths, spawns, team, money, slot, primary, secondary, buyFlags, armor, helmet, kit, useKind, useProgress] = msg.me;
     this.money = money;
     this.buyFlags = buyFlags;
     this.buyUntil = msg.game[8];
+    this.armor = armor;
+    this.helmet = helmet === 1;
+    this.kit = kit === 1;
+    this.useKind = useKind;
+    this.useProgress = useProgress;
+    this.attackers = msg.game[9];
+    this.bomb = msg.game[10];
+    this.mode = msg.game[11];
     this.team = team;
     this.game = msg.game;
     const phase = msg.game[0];
@@ -581,7 +622,9 @@ export class NetSystem {
         else if (phase === PHASE_FREEZE) line = `ROUND ${round} · GET READY`;
         else if (phase === PHASE_END || phase === PHASE_MATCH_END) line = this._banner || '';
         if (phase === PHASE_LIVE && Math.max(sa, sb) === roundsToWin - 1) line = 'MATCH POINT';
-        const you = this.team >= 0 ? `<div style="font-size:11px;color:${TEAM_CSS[this.team]}">YOU ARE ${TEAM_NAMES[this.team]}</div>` : '';
+        if (phase === PHASE_LIVE && this._banner && this.bomb && this.bomb[0] === 3) line = this._banner; // BOMB PLANTED AT A
+        const role = this.mode === MODE_BOMB && phase !== PHASE_WARMUP ? (this.team === this.attackers ? ' · ATTACK' : ' · DEFEND') : '';
+        const you = this.team >= 0 ? `<div style="font-size:11px;color:${TEAM_CSS[this.team]}">YOU ARE ${TEAM_NAMES[this.team]}${role}</div>` : '';
         top = `<div style="white-space:pre">${score}</div><div style="font-size:12px;letter-spacing:2px;color:#ffd38a">${line}</div>${you}`;
       }
       board = this._showBoard || phase === PHASE_MATCH_END;

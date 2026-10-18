@@ -30,6 +30,7 @@ export const SECONDARY = 1;
 export const WEAPONS = Object.freeze({
   pistol: {
     id: 'pistol',
+    armorPen: 0.5, // share of the damage that gets through armour
     name: 'Pistol',
     slot: SECONDARY,
     price: 0, // everyone has one; not for sale
@@ -49,6 +50,7 @@ export const WEAPONS = Object.freeze({
   },
   heavy: {
     id: 'heavy',
+    armorPen: 0.93, // share of the damage that gets through armour
     name: 'Heavy Pistol',
     slot: SECONDARY,
     price: 700,
@@ -68,6 +70,7 @@ export const WEAPONS = Object.freeze({
   },
   smg: {
     id: 'smg',
+    armorPen: 0.6, // share of the damage that gets through armour
     name: 'SMG',
     slot: PRIMARY,
     price: 1250,
@@ -87,6 +90,7 @@ export const WEAPONS = Object.freeze({
   },
   rifle: {
     id: 'rifle',
+    armorPen: 0.78, // share of the damage that gets through armour
     name: 'Assault Rifle',
     slot: PRIMARY,
     price: 2700,
@@ -106,6 +110,7 @@ export const WEAPONS = Object.freeze({
   },
   sniper: {
     id: 'sniper',
+    armorPen: 0.97, // share of the damage that gets through armour
     name: 'Sniper Rifle',
     slot: PRIMARY,
     price: 4750,
@@ -116,8 +121,8 @@ export const WEAPONS = Object.freeze({
     reloadTime: 3.0,
     refillAt: 2.3,
     drawTime: 0.8,
-    body: 100,
-    head: 100,
+    body: 115, // one body shot kills, even through armour
+    head: 400,
     killReward: 100,
     spread: { base: 0.0003, hip: 0.07, grow: 0, bloomMax: 0 },
     recoil: 0.03,
@@ -139,6 +144,25 @@ export const LOSS_STEP = 500;
 export const LOSS_MAX = 3400;
 export const BUY_TIME = 20; // seconds of the live round you can still buy in
 export const BUY_RADIUS = 10; // metres from one of your team's spawn points
+
+// Gear: not weapons, bought from the same menu. Armour has 100 points and
+// stays with you across rounds while you survive.
+export const EQUIPMENT = Object.freeze({
+  vest: { id: 'vest', name: 'Kevlar Vest', price: 650 },
+  vesthelm: { id: 'vesthelm', name: 'Kevlar + Helmet', price: 1000 },
+  kit: { id: 'kit', name: 'Defuse Kit', price: 400, defendersOnly: true },
+});
+export const MAX_ARMOR = 100;
+
+// A hit on someone wearing armour: armour soaks up what the weapon doesn't
+// get through (armorPen) and loses that many points. The helmet protects
+// the head; without one, headshots go straight through.
+// Returns { health, armor }: damage to health and armour points lost.
+export function applyArmor(damage, pen, armor, helmet, headshot) {
+  if (armor <= 0 || (headshot && !helmet)) return { health: damage, armor: 0 };
+  const soaked = Math.min(armor, Math.round(damage * (1 - pen)));
+  return { health: damage - soaked, armor: soaked };
+}
 
 export function weaponIndex(id) {
   return WEAPON_IDS.indexOf(id);

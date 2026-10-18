@@ -136,9 +136,10 @@ export async function startServer({
         if (!room) {
           if (rooms.size >= MAX_ROOMS) return reject(ws, 'busy', 'server is full');
           // the hello that creates a room picks its mode and map
-          // team rooms default to arena; dm rooms default to plaza (unless requested)
-          const mode = msg.mode === 'dm' ? 'dm' : 'teams';
-          const requestedMap = msg.map ? cleanLabel(msg.map, 'arena', 16) : (mode === 'teams' ? 'arena' : 'plaza');
+          // team and bomb rooms default to arena; dm rooms to plaza (unless requested)
+          // Bomb Defusal needs a map with bomb sites; on the plaza it's team elimination
+          const mode = msg.mode === 'dm' ? 'dm' : msg.mode === 'bomb' ? 'bomb' : 'teams';
+          const requestedMap = msg.map ? cleanLabel(msg.map, 'arena', 16) : (mode === 'dm' ? 'plaza' : 'arena');
           const map = requestedMap === 'plaza' ? 'plaza' : 'arena';
           const colliders = map === 'arena' ? ARENA.boxes : plazaColliders;
           const mapData = map === 'arena' ? ARENA : null;

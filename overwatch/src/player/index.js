@@ -28,7 +28,7 @@ export class PlayerSystem {
     // movement state (vy, yaw, grounded, surface, crouching, sprinting, eye,
     // half) lives here; the accessors below keep the public fields working.
     this.move = createMoveState(this.pos, this.vel);
-    this._moveIn = { forward: 0, right: 0, jump: false, crouch: false, sprint: false, ads: 0 };
+    this._moveIn = { forward: 0, right: 0, jump: false, crouch: false, sprint: false, ads: 0, use: false };
     this._moveOut = { hasWish: false, landed: false, impact: 0 };
     this.pitch = 0;
     this.lean = 0;
@@ -94,6 +94,7 @@ export class PlayerSystem {
     mi.crouch = inp.isDown('crouch');
     mi.sprint = inp.isDown('sprint');
     mi.ads = this.ads;
+    mi.use = inp.isDown('interact'); // F: plant / defuse (Bomb Defusal)
     const res = stepMove(this.move, mi, h, this.physics, this._moveOut);
     const hasWish = res.hasWish;
 
