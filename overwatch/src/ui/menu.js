@@ -10,6 +10,7 @@
 //    - Options: "Resume Game" (closes menu, re-locks pointer) and "Exit Match" (quits to Start Menu).
 
 import { defaultServerUrl } from '../core/config.js';
+import { SettingsPanel } from './settings.js';
 
 const DEFAULT_SERVER = defaultServerUrl(location, import.meta.env?.VITE_SERVER_URL);
 
@@ -61,6 +62,7 @@ export class MenuManager {
     this._injectStyles();
     this._buildPauseModal();
     this._buildStartMenu();
+    this.settings = new SettingsPanel(this.ctx);
     this._wireEvents();
 
     const url = new URL(location.href);
@@ -367,6 +369,7 @@ export class MenuManager {
         <div class="ow-tabs">
           <button class="ow-tab-btn active" id="tab-sp-btn">Single Player</button>
           <button class="ow-tab-btn" id="tab-mp-btn">Multiplayer</button>
+          <button class="ow-tab-btn" id="tab-settings-btn">⚙ Settings</button>
         </div>
 
         <!-- Single Player Panel -->
@@ -463,6 +466,7 @@ export class MenuManager {
           <button class="ow-primary-btn" id="pause-resume-btn" style="flex:1;margin:0;">RESUME GAME</button>
           <button class="ow-secondary-btn" id="pause-exit-btn" style="flex:1;margin:0;background:rgba(239,68,68,0.18);border-color:rgba(239,68,68,0.4);color:#fca5a5;">EXIT MATCH</button>
         </div>
+        <button class="ow-secondary-btn" id="pause-settings-btn" style="margin-top:12px;">⚙ SETTINGS</button>
       </div>
     `;
 
@@ -551,6 +555,10 @@ export class MenuManager {
 
       this.joinMultiplayer();
     });
+
+    // Settings (start menu tab and pause dialog)
+    this._el.querySelector('#tab-settings-btn').addEventListener('click', () => this.settings.show());
+    this._pauseEl.querySelector('#pause-settings-btn').addEventListener('click', () => this.settings.show());
 
     // Pause Dialog buttons
     this._pauseEl.querySelector('#pause-resume-btn').addEventListener('click', () => {
@@ -693,6 +701,7 @@ export class MenuManager {
     this._subs.length = 0;
     if (this._el) this._el.remove();
     if (this._pauseEl) this._pauseEl.remove();
+    if (this.settings) this.settings.dispose();
     const style = document.getElementById('ow-menu-styles');
     if (style) style.remove();
   }

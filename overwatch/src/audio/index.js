@@ -39,7 +39,7 @@ export class AudioSystem {
     try {
       this.ac = new AC();
       this.master = this.ac.createGain();
-      this.master.gain.value = 0.8;
+      this.master.gain.value = this.ctx.config.volume ?? 0.8;
       this.master.connect(this.ac.destination);
       // 1-second shared white-noise buffer
       const len = this.ac.sampleRate;
@@ -133,6 +133,12 @@ export class AudioSystem {
     }
     src.start(t, Math.random() * 0.5); // offset into the noise buffer
     src.stop(t + dur + 0.02);
+  }
+
+  // 0..1, from the settings menu
+  setVolume(v) {
+    this.ctx.config.volume = v;
+    if (this.master) this.master.gain.value = v;
   }
 
   // --- cues ---

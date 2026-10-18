@@ -2,6 +2,8 @@
 // config.q is the active preset. Never exceed its budgets (shadows, particles,
 // decals, lights, resolution).
 
+import { loadSettings, settingsToConfig } from './settings.js';
+
 export const QUALITY_PRESETS = {
   low: {
     label: 'LOW',
@@ -89,8 +91,10 @@ function pickPreset() {
 
 export function resolveConfig() {
   const url = new URL(location.href);
+  // the player's saved settings (core/settings.js); URL parameters win
+  const settings = settingsToConfig(loadSettings(), url.searchParams);
   const q = (url.searchParams.get('q') || url.searchParams.get('quality') || '').toLowerCase();
-  const quality = QUALITY_PRESETS[q] ? q : pickPreset();
+  const quality = QUALITY_PRESETS[q] ? q : settings.quality || pickPreset();
   const timeOfDay = (url.searchParams.get('time') || 'golden').toLowerCase();
   const seed = Number(url.searchParams.get('seed')) || 0x5eed1234;
   const shot = (url.searchParams.get('shot') || '').toLowerCase();
@@ -104,8 +108,11 @@ export function resolveConfig() {
     // headless captures are bit-identical run to run.
     shot: shot || null,
     exposure: Number(url.searchParams.get('exp')) || 1.0,
-    fov: Number(url.searchParams.get('fov')) || 70,
-    mouseSensitivity: Number(url.searchParams.get('sens')) || 0.0022,
+    fov: settings.fov,
+    mouseSensitivity: settings.mouseSensitivity,
+    invertY: settings.invertY,
+    volume: settings.volume,
+    showStats: settings.showStats,
     bloomStrength: Number(url.searchParams.get('bloom')) || 1.0,
     debug: url.searchParams.has('debug'),
     // Multiplayer: `?server=ws://host:8787` joins a server (see server/);
