@@ -157,7 +157,7 @@ export async function startServer({
       }
 
       if (msg.t === 'input') {
-        if (!client.room.receiveInputs(client.player.id, msg.i, msg.f, msg.r, msg.w)) reject(ws, 'bad-input', 'malformed input');
+        if (!client.room.receiveInputs(client.player.id, msg.i, msg.f, msg.r, msg.w, msg.n)) reject(ws, 'bad-input', 'malformed input');
       } else if (msg.t === 'buy') {
         client.room.buy(client.player.id, msg.w); // the next snapshot shows the result
       } else if (msg.t === 'sell') {

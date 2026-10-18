@@ -23,8 +23,9 @@ npm test           # shared gameplay tests (Node built-in runner, no deps)
 Controls: click to lock the mouse, **WASD** move, **Shift** sprint, **Space**
 jump, **R** reload, **Q/E** lean, **F** interact, **G** use, **X** inspect,
 **1 / 2** or the **mouse wheel** switch between your main weapon and pistol,
-**B** opens the buy menu, **F** (hold) plants or defuses the bomb, **Esc**
-opens the game menu.
+**4** takes out a grenade (press again for the next type; click throws,
+right-click lobs), **B** opens the buy menu, **F** (hold) plants or defuses
+the bomb, **Esc** opens the game menu.
 
 **Settings** (start menu tab, or Esc → Settings): mouse sensitivity, invert
 mouse Y, field of view, volume, graphics quality and an FPS overlay. They're
@@ -138,7 +139,15 @@ Works now:
   while you survive. A rifle headshot no longer kills through a helmet; the
   sniper still kills with one body shot.
 
-**Not yet:** grenades. Other players are drawn
+- Grenades: Flashbang ($200, carry 2), Smoke ($300) and HE ($300). A flash
+  blinds anyone who can see it, for up to 3.5 s when you look straight at
+  it, a brief flicker if it's behind you, nothing through walls; teammates
+  too. A smoke settles, then fills about 4 m for 18 s. An HE does up to 98
+  damage over 8 m, blocked by walls, to enemies and to yourself (not your
+  teammates), and pays $300 for a kill. The server simulates every throw;
+  everyone sees the same flight because it's a deterministic simulation
+  shared by the server and the game. Survivors keep unused grenades. In
+  single player they're free and HE grenades hurt the AI. Other players are drawn
 holding a rifle whatever they carry (you still hear their real weapon).
 
 ### Hosting a match online

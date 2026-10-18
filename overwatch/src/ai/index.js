@@ -192,6 +192,24 @@ export class AiSystem {
         });
         if (killed) this._kill(s, p.point, p.incident || new THREE.Vector3(0, 1, 0));
       }),
+      // a grenade (single player): damage falls off with distance; walls block it
+      e.on('explosion', (p) => {
+        for (const s of this.soldiers) {
+          if (s.dead) continue;
+          const b = s.box;
+          const c = { x: (b.min[0] + b.max[0]) / 2, y: (b.min[1] + b.max[1]) / 2, z: (b.min[2] + b.max[2]) / 2 };
+          const at = { x: p.point.x, y: p.point.y + 0.3, z: p.point.z };
+          const d = Math.hypot(c.x - at.x, c.y - at.y, c.z - at.z);
+          const amount = Math.round(p.damage * Math.max(0, 1 - d / p.radius));
+          if (amount <= 0) continue;
+          const wall = this.physics.raycastStatic(at, { x: (c.x - at.x) / d, y: (c.y - at.y) / d, z: (c.z - at.z) / d }, d);
+          if (wall && wall.hit) continue;
+          s.hp -= amount;
+          const killed = s.hp <= 0;
+          e.emit('damage:dealt', { target: s, amount, headshot: false, killed, point: c });
+          if (killed) this._kill(s, c, new THREE.Vector3(c.x - at.x, 1, c.z - at.z).normalize());
+        }
+      }),
     );
   }
 

@@ -23,6 +23,7 @@
 import * as THREE from 'three';
 import { playerHitbox } from '../../shared/combat.js';
 import { WEAPONS, WEAPON_IDS } from '../../shared/weapons.js';
+import { GRENADES, GRENADE_IDS, grenadeIndex } from '../../shared/grenades.js';
 import { createSoldier, disposeSoldier, poseSoldier } from '../characters/soldier.js';
 import { HALF, HALF_Y_CROUCH, stepMove } from '../../shared/movement.js';
 import {
@@ -37,12 +38,15 @@ import {
   EV_BOMB,
   EV_HALFTIME,
   EV_HIT,
+  EV_NADE,
+  EV_NADE_POP,
   EV_KILL,
   EV_MATCH_END,
   EV_ROUND_END,
   EV_SHOT,
   INPUT_SEND_EVERY,
   KILL_BY_BOMB,
+  KILL_BY_HE,
   MODE_BOMB,
   PHASE_END,
   PHASE_FREEZE,
@@ -60,6 +64,7 @@ import {
   unpackState,
   writeInput,
   writeShot,
+  writeThrow,
 } from '../../shared/protocol.js';
 
 const INTERP_TICKS = 12; // 100 ms: two snapshot intervals of cushion
@@ -104,6 +109,8 @@ export class NetSystem {
     this._shots = [];
     this._reloads = [];
     this._switches = [];
+    this._throws = [];
+    this.nades = { he: 0, flash: 0, smoke: 0 }; // what the server says we carry
     this.money = 0;
     this.buyFlags = 0; // BUY_* from the last snapshot
     // Bomb Defusal (src/bomb draws it): our gear and use progress, the
@@ -167,6 +174,10 @@ export class NetSystem {
       }),
       e.on('weapon:reload', (p) => {
         if (this.id && p.phase === 'start') this._reloads.push(this._seq);
+      }),
+      // a grenade throw rides the input step it happens before, like a shot
+      e.on('grenade:throw', (p) => {
+        if (this.id && !this.player.dead) this._throws.push(writeThrow(this._seq, grenadeIndex(p.type), p.origin, p.dir, p.lob));
       }),
       e.on('weapon:switch', (p) => {
         if (!this.id) return;
@@ -301,13 +312,14 @@ export class NetSystem {
       } else if (type === EV_KILL) {
         const [, killer, victim, headshot, weaponIdx] = ev;
         const weapon = WEAPON_IDS[weaponIdx];
+        const by = weapon ? WEAPONS[weapon].name : weaponIdx === KILL_BY_HE ? GRENADES.he.name : null;
         if (killer === me) e.emit('damage:dealt', { target: { remoteId: victim }, amount: 0, headshot: headshot === 1, killed: true, point: null });
         e.emit('player:kill', {
           killer: killer === 0 ? null : this._nameOf(killer), // null: the world (see bomb)
           bomb: weaponIdx === KILL_BY_BOMB, // the explosion; otherwise null killer = fell off the map
           victim: this._nameOf(victim),
           headshot: headshot === 1,
-          weapon: weapon ? WEAPONS[weapon].name : null,
+          weapon: by,
           byMe: killer === me,
           onMe: victim === me,
         });
@@ -327,13 +339,23 @@ export class NetSystem {
         else if (kind === BOMBEV_DEFUSED) this._banner = 'BOMB DEFUSED';
         else if (kind === BOMBEV_EXPLODED) this._banner = 'BOMB EXPLODED';
         e.emit('bomb:event', { kind, player, name: player ? this._nameOf(player) : null, site, byMe: player === me });
+      } else if (type === EV_NADE) {
+        const [, id, owner, t, ox, oy, oz, vx, vy, vz, tick, seq] = ev;
+        e.emit('grenade:spawn', {
+          id, owner, type: GRENADE_IDS[t], tick, seq, mine: owner === me,
+          origin: { x: ox, y: oy, z: oz }, vel: { x: vx, y: vy, z: vz },
+        });
+      } else if (type === EV_NADE_POP) {
+        const [, id, t, x, y, z, owner] = ev;
+        e.emit('grenade:pop', { id, type: GRENADE_IDS[t], pos: { x, y, z }, owner });
       } else if (type === EV_HALFTIME) {
         this._banner = 'HALFTIME · SWITCHING SIDES';
         e.emit('match:halftime', { attackers: ev[1] });
       }
     }
 
-    const [hp, dead, , , kills, deaths, spawns, team, money, slot, primary, secondary, buyFlags, armor, helmet, kit, useKind, useProgress] = msg.me;
+    const [hp, dead, , , kills, deaths, spawns, team, money, slot, primary, secondary, buyFlags, armor, helmet, kit, useKind, useProgress, nades] = msg.me;
+    if (nades) this.nades = { he: nades[0], flash: nades[1], smoke: nades[2] };
     this.money = money;
     this.buyFlags = buyFlags;
     this.buyUntil = msg.game[8];
@@ -391,11 +413,13 @@ export class NetSystem {
       if (this._shots.length) msg.f = this._shots;
       if (this._reloads.length) msg.r = this._reloads;
       if (this._switches.length) msg.w = this._switches;
+      if (this._throws.length) msg.n = this._throws;
       this.ws.send(encode(msg));
       this._outbox = [];
       this._shots = [];
       this._reloads = [];
       this._switches = [];
+      this._throws = [];
     }
 
     if (this._snap) this._reconcile(h);

@@ -75,6 +75,10 @@ export class AudioSystem {
       // Bomb Defusal
       e.on('bomb:beep', (p) => this.bombBeep(p.position, p.urgent)),
       e.on('bomb:event', (p) => this.bombEvent(p.kind)),
+      // grenades
+      e.on('grenade:thrown', () => this._noise(0.12, 0.12, 1400, 1.2)),
+      e.on('grenade:effect', (p) => this.grenade(p.type, p.position)),
+      e.on('flash:blind', (p) => this._tone(3100, Math.min(4, p.duration), 'sine', 0.12)),
       e.on('actor:footstep', (p) => this.footstep(p.running, p.position)),
       e.on('player:land', (p) => this.land(p.velocity)),
       e.on('damage:taken', () => this.hurt()),
@@ -178,6 +182,21 @@ export class AudioSystem {
       this._noise(1.6, 1.0, 180, 0.6);
       this._noise(0.5, 0.7, 900, 0.8);
       this._tone(48, 1.2, 'sine', 0.9);
+    }
+  }
+
+  grenade(type, position) {
+    if (!this.ac) return;
+    const s = this._spatial(position);
+    const g = Math.max(0.15, s.gain);
+    if (type === 'he') {
+      this._noise(0.7, 0.9 * g, 260, 0.7, 0, s.pan);
+      this._tone(55, 0.5, 'sine', 0.6 * g);
+    } else if (type === 'flash') {
+      this._noise(0.25, 0.9 * g, 2600, 1.5, 0, s.pan);
+      this._tone(160, 0.12, 'square', 0.3 * g);
+    } else {
+      this._noise(2.2, 0.35 * g, 700, 0.5, 0, s.pan); // the hiss of a smoke
     }
   }
 

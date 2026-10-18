@@ -11,6 +11,7 @@
 
 import { BUY_FREE, BUY_SELL_PRIMARY, BUY_SELL_SECONDARY, MODE_BOMB, TICK_RATE } from '../../shared/protocol.js';
 import { EQUIPMENT, MAX_ARMOR, PRIMARY, SECONDARY, WEAPONS } from '../../shared/weapons.js';
+import { GRENADES } from '../../shared/grenades.js';
 
 // menu rows, in key order; gear (armour, the defuse kit) only online
 const ITEMS = [
@@ -21,8 +22,11 @@ const ITEMS = [
   { id: 'vest', group: 'GEAR', gear: true },
   { id: 'vesthelm', group: 'GEAR', gear: true },
   { id: 'kit', group: 'GEAR', gear: true },
+  { id: 'flash', group: 'GRENADES', nade: true },
+  { id: 'smoke', group: 'GRENADES', nade: true },
+  { id: 'he', group: 'GRENADES', nade: true },
 ];
-const defOf = (id) => WEAPONS[id] || EQUIPMENT[id];
+const defOf = (id) => WEAPONS[id] || EQUIPMENT[id] || GRENADES[id];
 
 export class BuySystem {
   static id = 'buy';
@@ -43,11 +47,12 @@ export class BuySystem {
         this.close(false);
         return;
       }
-      const n = /^Digit([1-9])$/.exec(e.code);
+      const n = /^Digit([0-9])$/.exec(e.code);
       const items = this._items();
-      if (n && items[n[1] - 1]) {
+      const i = n ? (n[1] === '0' ? 9 : n[1] - 1) : -1; // 0 is the tenth
+      if (items[i]) {
         e.preventDefault();
-        this._choose(items[n[1] - 1].id, false);
+        this._choose(items[i].id, false);
       }
     };
     document.addEventListener('keydown', this._onKey, true);
@@ -108,11 +113,20 @@ export class BuySystem {
 
   _owned(id) {
     const net = this._net;
+    if (GRENADES[id]) {
+      const g = this.ctx.peek('grenades');
+      return !!g && g.count(id) >= GRENADES[id].max;
+    }
     if (id === 'vest') return !!net && net.armor >= MAX_ARMOR;
     if (id === 'vesthelm') return !!net && net.armor >= MAX_ARMOR && net.helmet;
     if (id === 'kit') return !!net && net.kit;
     const gun = this.weapons.loadout[WEAPONS[id].slot];
     return !!gun && gun.id === id;
+  }
+
+  _nadeCount(id) {
+    const g = this.ctx.peek('grenades');
+    return g ? g.count(id) : 0;
   }
 
   toggle() {
@@ -144,7 +158,8 @@ export class BuySystem {
     }
     if (this._owned(id)) return;
     if (!net) {
-      this.weapons.give(id);
+      if (GRENADES[id]) this.ctx.peek('grenades').give(id);
+      else this.weapons.give(id);
       return;
     }
     if (this.free || this.money >= this._price(id)) net.buy(id);
@@ -195,6 +210,8 @@ export class BuySystem {
     const free = this.free;
     const loadout = this.weapons.loadout;
     const gear = net ? [net.armor, net.helmet, net.kit, net.team, net.attackers, net.mode] : [];
+    const nadesNow = this.ctx.peek('grenades');
+    if (nadesNow) gear.push(nadesNow.count('he'), nadesNow.count('flash'), nadesNow.count('smoke'));
     const key = [money, free, net ? net.buyFlags : 0, loadout[PRIMARY] && loadout[PRIMARY].id, loadout[SECONDARY].id, ...gear].join('|');
     if (!force && key === this._key) return;
     this._key = key;
@@ -218,7 +235,7 @@ export class BuySystem {
         `<div ${clickable ? `data-buy="${item.id}"` : ''} style="display:flex;justify-content:space-between;gap:24px;padding:6px 8px;` +
         `border-radius:4px;background:${owned ? 'rgba(80,140,90,.18)' : 'rgba(255,255,255,.05)'};` +
         `cursor:${clickable ? 'pointer' : 'default'};opacity:${afford || owned ? 1 : 0.55}">` +
-        `<span><b style="color:#ffd27a">${i + 1}</b>&nbsp; ${w.name}</span>${right}</div>`
+        `<span><b style="color:#ffd27a">${(i + 1) % 10}</b>&nbsp; ${w.name}${item.nade && w.max > 1 ? ` <span style="color:#7f8ea3">(${this._nadeCount(item.id)}/${w.max})</span>` : ''}</span>${right}</div>`
       );
     });
     this._panel.innerHTML =
@@ -226,7 +243,7 @@ export class BuySystem {
       `<b style="font-size:15px;letter-spacing:2px">BUY</b>` +
       `<span style="color:#7fe08a;font-size:15px">${free ? 'FREE' : `$${money}`}</span></div>` +
       rows.join('') +
-      `<div style="color:#7f8ea3;font-size:11px;margin-top:12px">Click or press 1–${items.length} · B to close and play</div>`;
+      `<div style="color:#7f8ea3;font-size:11px;margin-top:12px">Click or press 1–${items.length > 9 ? 0 : items.length} · B to close and play</div>`;
   }
 
   // Money and the "press B" hint, online.
