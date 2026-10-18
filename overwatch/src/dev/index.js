@@ -21,6 +21,8 @@ export class DevSystem {
         'position:fixed;left:12px;bottom:12px;z-index:20;font:11px/1.5 ui-monospace,Consolas,monospace;' +
         'color:#9fe8b0;background:rgba(0,0,0,.45);padding:6px 10px;border-radius:6px;' +
         'pointer-events:none;text-shadow:0 1px 2px #000;white-space:pre;';
+      // off unless asked for (settings menu, or ?debug)
+      el.style.display = ctx.config.showStats ? 'block' : 'none';
       document.body.appendChild(el);
       this._el = el;
     }
@@ -36,6 +38,10 @@ export class DevSystem {
       reserve: 0,
       reloading: false,
     };
+  }
+
+  setVisible(on) {
+    if (this._el) this._el.style.display = on ? 'block' : 'none';
   }
 
   update(dt, ctx) {

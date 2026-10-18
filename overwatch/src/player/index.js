@@ -169,7 +169,7 @@ export class PlayerSystem {
     this.lastAim.dx = aim.dx;
     this.lastAim.dy = aim.dy;
     this.yaw -= aim.dx * sens;
-    this.pitch -= aim.dy * sens;
+    this.pitch -= aim.dy * sens * (ctx.config.invertY ? -1 : 1);
     this.pitch = THREE.MathUtils.clamp(this.pitch, -1.5, 1.5);
 
     // lean (Q/E)

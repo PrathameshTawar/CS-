@@ -71,7 +71,7 @@ export class MySystem {
 | `buy` | `src/buy/` | the buy menu (B), money and buy-time HUD; online it asks the server through `net` |
 | `fx` | `src/fx/` | GPU particles, muzzle flash, tracers, impacts, decals, smoke, blood, shells |
 | `ai` | `src/ai/` | enemy characters, navigation, perception, cover selection, combat behaviour |
-| `ui` | `src/ui/` | HUD, crosshair, hitmarkers, damage indicators, ammo, killfeed, menus |
+| `ui` | `src/ui/` | HUD, crosshair, hitmarkers, damage indicators, ammo, killfeed, menus, the settings panel (`src/ui/settings.js`; the stored values and their rules are `src/core/settings.js`) |
 | `audio` | `src/audio/` | synthesized weapon/foley audio, spatialisation, reverb, occlusion, mix |
 | `net` | `src/net/` | multiplayer client (only with `?server=`): input upload, prediction/reconciliation, remote-player interpolation and stand-in meshes. Replaces `ai` when online |
 

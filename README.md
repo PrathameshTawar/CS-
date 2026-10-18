@@ -23,7 +23,13 @@ npm test           # shared gameplay tests (Node built-in runner, no deps)
 Controls: click to lock the mouse, **WASD** move, **Shift** sprint, **Space**
 jump, **R** reload, **Q/E** lean, **F** interact, **G** use, **X** inspect,
 **1 / 2** or the **mouse wheel** switch between your main weapon and pistol,
-**B** opens the buy menu.
+**B** opens the buy menu, **Esc** opens the game menu.
+
+**Settings** (start menu tab, or Esc → Settings): mouse sensitivity, invert
+mouse Y, field of view, volume, graphics quality and an FPS overlay. They're
+saved in your browser and apply immediately, except graphics quality, which
+needs a reload (the panel offers one). URL parameters such as `?sens=`,
+`?fov=` and `?q=` still override them.
 
 Weapons: Pistol (free, everyone has one), Heavy Pistol ($700), SMG ($1,250),
 Assault Rifle ($2,700) and Sniper Rifle ($4,750, right-click to scope). In
