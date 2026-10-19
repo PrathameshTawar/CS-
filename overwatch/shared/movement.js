@@ -23,6 +23,16 @@ export const MAX_FALL_SPEED = 24;
 // Feet below this are out of the world (walked or jumped off the map): the
 // player dies. Well below every floor; falling there takes about 2 s.
 export const KILL_Y = -20;
+// Landing faster than this hurts: a drop of about 3.4 m is free; more costs
+// FALL_DAMAGE health per m/s over it, so a fall at full speed (about 15 m)
+// is 100. Armour doesn't help.
+export const SAFE_FALL_SPEED = 11.5;
+export const FALL_DAMAGE = 8;
+
+// The health a landing at `impact` m/s (stepMove's out.impact) costs.
+export function fallDamage(impact) {
+  return impact > SAFE_FALL_SPEED ? Math.round((impact - SAFE_FALL_SPEED) * FALL_DAMAGE) : 0;
+}
 
 // `pos` and `vel` only need x/y/z fields, so the client can pass its
 // THREE.Vector3s and the server plain objects.
@@ -55,13 +65,29 @@ export function hasHeadroom(state, world) {
   return !world.overlaps(_probe, HALF);
 }
 
+// Puts the feet straight down onto the highest floor beneath them (a spawn
+// dropped in from above), standing still.
+export function settle(state, world) {
+  _center.x = state.pos.x;
+  _center.y = state.pos.y + state.half.y;
+  _center.z = state.pos.z;
+  _delta.x = _delta.y = _delta.z = 0;
+  const res = world.moveCharacter(_center, state.half, _delta, STEP_H);
+  state.pos.y = _center.y - state.half.y;
+  state.prevCenterY = _center.y;
+  state.vy = 0;
+  state.grounded = res.grounded;
+  state.surface = res.surface;
+  return state;
+}
+
 // Advances `state` by one fixed step of `h` seconds.
 //   input: { forward: -1..1, right: -1..1, jump (pressed this step),
 //            crouch, sprint, ads: 0..1 }
 //   out:   reused result { hasWish, landed, impact } for presentation
 //          (footsteps, landing shake/sound); gameplay reads `state`.
-// The operation order mirrors the original player system exactly so traces
-// recorded before the split still reproduce bit-for-bit.
+// Deterministic: the same input over the same world gives the same state,
+// bit for bit, on the client and the server (tests/movement.test.js).
 export function stepMove(state, input, h, world, out) {
   const f = input.forward;
   const r = input.right;
@@ -111,7 +137,8 @@ export function stepMove(state, input, h, world, out) {
   _center.x = pos.x;
   _center.y = pos.y + half.y;
   _center.z = pos.z;
-  const res = world.moveCharacter(_center, half, _delta, STEP_H);
+  // on the ground, follow it down stairs; in the air, fall until we land
+  const res = world.moveCharacter(_center, half, _delta, STEP_H, state.grounded ? STEP_H : 0);
   pos.x = _center.x;
   pos.y = _center.y - half.y; // feet = center - half.y
   pos.z = _center.z;

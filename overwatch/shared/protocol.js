@@ -50,7 +50,7 @@
 // are told where a carried bomb is, and by whom). `ev` lists events since
 // the recipient's last snapshot (EV_* below).
 
-export const PROTOCOL_VERSION = 6;
+export const PROTOCOL_VERSION = 7;
 export const TICK_RATE = 120; // server steps per second; equals the client's FIXED_STEP
 export const SNAPSHOT_EVERY = 6; // ticks between snapshots (20 Hz)
 export const INPUT_SEND_EVERY = 4; // client fixed steps per input batch (30 Hz)
@@ -74,8 +74,8 @@ export const PL_DEAD = 4;
 
 // combat events in snapshots
 export const EV_SHOT = 1; // [EV_SHOT, shooterId, ox, oy, oz, ex, ey, ez, weaponIndex]
-export const EV_HIT = 2; // [EV_HIT, shooterId, targetId, damage, headshot, x, y, z]
-export const EV_KILL = 3; // [EV_KILL, killerId (0: the world), victimId, headshot, weaponIndex (-1: fell, KILL_BY_BOMB: the bomb)]
+export const EV_HIT = 2; // [EV_HIT, shooterId (0: the world, a hard landing), targetId, damage, headshot, x, y, z]
+export const EV_KILL = 3; // [EV_KILL, killerId (0: the world), victimId, headshot, weaponIndex (-1: fell off the map, KILL_BY_*: the bomb, an HE, a landing)]
 export const EV_SPAWN = 4; // [EV_SPAWN, playerId]
 export const EV_ROUND_END = 5; // [EV_ROUND_END, round, winnerTeam (-1 draw), reason]
 export const EV_MATCH_END = 6; // [EV_MATCH_END, winnerTeam]
@@ -89,6 +89,7 @@ export const EV_NADE_POP = 10; // [EV_NADE_POP, nadeId, type, x, y, z, ownerId]:
 
 export const KILL_BY_BOMB = -2;
 export const KILL_BY_HE = -3;
+export const KILL_BY_FALL = -4; // a landing too hard (-1 is off the map)
 export const BOMBEV_PLANTED = 1;
 export const BOMBEV_DEFUSED = 2;
 export const BOMBEV_EXPLODED = 3;

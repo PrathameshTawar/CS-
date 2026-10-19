@@ -47,6 +47,7 @@ import {
   INPUT_SEND_EVERY,
   KILL_BY_BOMB,
   KILL_BY_HE,
+  KILL_BY_FALL,
   MODE_BOMB,
   PHASE_END,
   PHASE_FREEZE,
@@ -304,11 +305,11 @@ export class NetSystem {
         const point = { x, y, z };
         if (shooter === me) {
           e.emit('damage:dealt', { target: { remoteId: target }, amount, headshot: headshot === 1, killed: false, point });
-        } else {
+        } else if (shooter !== 0) {
           // blood for hits we didn't predict ourselves
           e.emit('bullet:impact', { point, normal: { x: 0, y: 1, z: 0 }, surface: 'flesh', damage: amount });
         }
-        if (target === me) this._lastAttacker = shooter;
+        if (target === me) this._lastAttacker = shooter; // 0: a hard landing, from nowhere
       } else if (type === EV_KILL) {
         const [, killer, victim, headshot, weaponIdx] = ev;
         const weapon = WEAPON_IDS[weaponIdx];
@@ -318,7 +319,8 @@ export class NetSystem {
           killer: killer === 0 ? null : this._nameOf(killer), // null: the world (see bomb)
           killerId: killer,
           victimId: victim,
-          bomb: weaponIdx === KILL_BY_BOMB, // the explosion; otherwise null killer = fell off the map
+          bomb: weaponIdx === KILL_BY_BOMB, // the explosion
+          fall: weaponIdx === KILL_BY_FALL, // a deadly landing; otherwise null killer = fell off the map
           victim: this._nameOf(victim),
           headshot: headshot === 1,
           weapon: by,

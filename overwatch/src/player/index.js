@@ -11,7 +11,7 @@
 // pos + eye (see shared/movement.js).
 
 import * as THREE from 'three';
-import { createMoveState, stepMove, EYE_STAND, KILL_Y, SPRINT } from '../../shared/movement.js';
+import { createMoveState, fallDamage, settle, stepMove, EYE_STAND, KILL_Y, SPRINT } from '../../shared/movement.js';
 
 export class PlayerSystem {
   static id = 'player';
@@ -42,6 +42,10 @@ export class PlayerSystem {
     this._bobPhase = 0;
     this._stepAcc = 0;
     this._stateT = 0;
+    this._dip = 0; // camera dip after a landing (m), springs back
+    this._dipV = 0;
+    // (re)spawned high above the map: put down on the ground at the next step
+    this._settle = true;
 
     // scratch (reused; no per-frame allocation)
     this._e = new THREE.Euler();
@@ -95,6 +99,10 @@ export class PlayerSystem {
     mi.sprint = inp.isDown('sprint');
     mi.ads = this.ads;
     mi.use = inp.isDown('interact'); // F: plant / defuse (Bomb Defusal)
+    if (this._settle) {
+      this._settle = false;
+      if (!this.serverAuthority) settle(this.move, this.physics); // online, the server spawns us
+    }
     const res = stepMove(this.move, mi, h, this.physics, this._moveOut);
     const hasWish = res.hasWish;
 
@@ -110,6 +118,18 @@ export class PlayerSystem {
     if (res.landed) {
       ctx.events.emit('player:land', { velocity: res.impact, surface: this.surface });
       this.addShake(Math.min(0.6, res.impact * 0.05));
+      // the knees give: the camera sinks and springs back
+      this._dipV = Math.max(this._dipV, Math.min(3, res.impact * 0.12));
+      // a hard landing hurts (online the server decides and tells us)
+      const damage = fallDamage(res.impact);
+      if (damage > 0 && !this.dead && !this.serverAuthority) {
+        this.health = Math.max(0, this.health - damage);
+        ctx.events.emit('damage:taken', { amount: damage, from: null, health: this.health });
+        if (this.health <= 0) {
+          this.dead = true;
+          ctx.events.emit('player:kill', { killer: null, victim: 'YOU', headshot: false, byMe: false, onMe: true, fall: true });
+        }
+      }
     }
 
     // footsteps (distance-based)
@@ -159,6 +179,7 @@ export class PlayerSystem {
         this.pos.copy(this._respawnAt);
         this.vel.set(0, 0, 0);
         this.vy = 0;
+        this._settle = true;
       }
       return;
     }
@@ -184,6 +205,10 @@ export class PlayerSystem {
     this._recoilYaw *= decay;
     this._shake = Math.max(0, this._shake - dt * 1.6);
     this._fovPunch = Math.max(0, this._fovPunch - dt * 3.2);
+    // landing dip: a stiff, damped spring pulled back to 0
+    this._dipV -= (this._dip * 140 + this._dipV * 18) * Math.min(dt, 0.05);
+    this._dip = Math.max(0, this._dip + this._dipV * Math.min(dt, 0.05));
+    if (this._dip === 0 && this._dipV < 0) this._dipV = 0;
 
     // head bob
     const hSpeed = Math.hypot(this.vel.x, this.vel.z);
@@ -211,7 +236,7 @@ export class PlayerSystem {
     this._right.set(Math.cos(this.yaw), 0, -Math.sin(this.yaw));
     this.camera.position.set(
       this.pos.x + this._right.x * this.lean * 0.11 + bobX,
-      this.pos.y + this.eye + bobY,
+      this.pos.y + this.eye + bobY - this._dip,
       this.pos.z + this._right.z * this.lean * 0.11,
     );
 

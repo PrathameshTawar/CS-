@@ -86,7 +86,7 @@ import {
   bombDamage,
   siteAt,
 } from '../shared/bomb.js';
-import { KILL_Y, createMoveState, stepMove } from '../shared/movement.js';
+import { KILL_Y, createMoveState, fallDamage, settle, stepMove } from '../shared/movement.js';
 import {
   MAX_HEALTH,
   RESPAWN_TIME,
@@ -146,6 +146,7 @@ import {
   MAX_SHOTS_PER_MESSAGE,
   KILL_BY_BOMB,
   KILL_BY_HE,
+  KILL_BY_FALL,
   MODE_BOMB,
   MODE_DM,
   MODE_TEAMS,
@@ -453,6 +454,7 @@ export class Room {
           this._kill(p, null, false); // fell off the map
           continue;
         }
+        if (this._out.landed && this._fall(p, this._out.impact)) continue;
         if (this.mode === MODE_BOMB) this._bombUse(p, input);
         if (p.reloadStart >= 0) {
           const gun = p.gun;
@@ -812,7 +814,21 @@ export class Room {
     if (target.hp === 0) this._kill(target, p, headshot, gun.id);
   }
 
-  // `killer` null means the world (fell off the map): a death, no kill credit.
+  // A hard landing: fall damage (armour doesn't help), shown to everyone as a
+  // hit from the world (shooter 0). True if it killed.
+  _fall(p, impact) {
+    const damage = Math.min(p.hp, fallDamage(impact));
+    if (damage <= 0) return false;
+    p.hp -= damage;
+    const m = p.move;
+    this._emit([EV_HIT, 0, p.id, damage, 0, r3(m.pos.x), r3(m.pos.y), r3(m.pos.z)]);
+    if (p.hp > 0) return false;
+    this._kill(p, null, false, 'fall');
+    return true;
+  }
+
+  // `killer` null means the world (fell off the map, or a deadly landing:
+  // weaponId 'fall'): a death, no kill credit.
   // `weaponId` 'bomb': killed by the explosion.
   _kill(target, killer, headshot, weaponId = null) {
     target.hp = 0;
@@ -833,7 +849,8 @@ export class Room {
       const reward = weaponId === 'he' ? 300 : weaponId && WEAPONS[weaponId] ? WEAPONS[weaponId].killReward : 0;
       this._pay(killer, reward);
     }
-    const how = weaponId === 'bomb' ? KILL_BY_BOMB : weaponId === 'he' ? KILL_BY_HE : weaponId ? weaponIndex(weaponId) : -1;
+    const how =
+      weaponId === 'bomb' ? KILL_BY_BOMB : weaponId === 'he' ? KILL_BY_HE : weaponId === 'fall' ? KILL_BY_FALL : weaponId ? weaponIndex(weaponId) : -1;
     this._emit([EV_KILL, killer ? killer.id : 0, target.id, headshot ? 1 : 0, how]);
   }
 
@@ -1091,12 +1108,13 @@ export class Room {
     p.spawns++;
   }
 
-  // Fresh movement state at a spawn, settled onto the ground with one idle
-  // step (not a client input) so snapshots show the player standing.
+  // Fresh movement state at a spawn, put down on the ground and given one
+  // idle step (not a client input) so snapshots show the player standing.
   _place(p, x, z) {
     const yaw = p.move ? p.move.yaw : Math.PI;
     p.move = createMoveState({ x, y: SPAWN_HEIGHT, z }, { x: 0, y: 0, z: 0 });
     p.move.yaw = yaw;
+    settle(p.move, this.world);
     stepMove(p.move, IDLE, H, this.world, this._out);
   }
 
