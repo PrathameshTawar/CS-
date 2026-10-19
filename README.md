@@ -188,7 +188,23 @@ supports WebSockets:
   -t overwatch overwatch && docker run -p 8787:8787 overwatch`).
 
 The host provides the `PORT` variable and https. An https page connects
-over `wss://` automatically. The health check is at `/health`.
+over `wss://` automatically. The health check is at `/health` (it also
+reports how many rooms and players are on).
+
+How many players a server holds, measured with bots over real WebSockets
+(full 10-player rooms, everyone moving): about 6% of one CPU core to run,
+plus about 0.1% per player, and about 14 KB/s down per player (roughly
+50 MB per player-hour). A 0.5-CPU host (Render Starter) comfortably holds
+about 150-200 players; a 0.1-CPU free tier about 10-20. The server allows at
+most 64 rooms. `COMPRESS=1` cuts the traffic about 5x (to 3 KB/s) but
+roughly quadruples the CPU, so it's off unless bandwidth costs more than CPU.
+
+Online, a dropped connection isn't the end of the match: the game shows
+CONNECTION LOST and reconnects for up to 25 s, and the server holds the
+player (standing where they were, score and gear kept) for 30 s. Leaving on
+purpose or closing the tab frees the slot at once. A living player who
+neither moves, looks around nor acts for 90 s while others are in the room
+is kicked, so idle players don't hold slots in full rooms.
 
 To host the page somewhere else (Netlify, itch.io) and the server on its
 own, build the page with the server's address baked in:

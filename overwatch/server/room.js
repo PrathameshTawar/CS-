@@ -203,6 +203,8 @@ export const SPAWNS = [
 // each team spawns on its own side of the plaza (+Z / -Z)
 export const TEAM_SPAWNS = [SPAWNS.filter((s) => s[1] > 0), SPAWNS.filter((s) => s[1] < 0)];
 
+export const AFK_TIME = 90; // s
+
 // round timings, in ticks (overridable per room, e.g. for tests)
 export const DEFAULT_RULES = Object.freeze({
   freezeTicks: 6 * TICK_RATE, // time to buy before the round goes live
@@ -217,6 +219,9 @@ export const DEFAULT_RULES = Object.freeze({
   kitDefuseTicks: KIT_DEFUSE_TIME * TICK_RATE,
   bombTicks: BOMB_TIME * TICK_RATE,
   halftime: true, // swap sides after roundsToWin - 1 rounds
+  // a living player who neither moves, looks around nor acts for this long,
+  // while someone else is in the room, is idle (the server kicks them)
+  afkTicks: AFK_TIME * TICK_RATE,
 });
 const SPAWN_HEIGHT = 60;
 const IDLE = Object.freeze({ forward: 0, right: 0, jump: false, crouch: false, sprint: false, ads: 0 });
@@ -317,6 +322,7 @@ export class Room {
       nades: { he: 0, flash: 0, smoke: 0 },
       lastThrow: -Infinity,
       rejected: 0, // shots refused (rate, ammo, origin): a cheat signal
+      idle: 0, // ticks alive and in play without moving, looking or acting
       eventsSeen: this._eventN,
       history,
       hitbox: { min: [0, 0, 0], max: [0, 0, 0], surface: 'flesh', owner: null },
@@ -437,13 +443,17 @@ export class Room {
   // One authoritative tick.
   step() {
     this.tick++;
+    const others = this.players.size >= 2;
     for (const p of this.players.values()) {
       p.credit = Math.min(MAX_CREDIT, p.credit + 1);
+      let active = false;
       while (p.credit >= 1 && p.queue.length) {
         const input = p.queue.shift();
         p.credit -= 1;
+        if (p.actions.length) active = true;
         this._runActions(p, input.seq);
         p.lastSeq = input.seq;
+        if (input.forward || input.right || input.jump || input.crouch || input.use || input.pitch !== p.pitch || input.yaw !== p.move.yaw) active = true;
         p.pitch = input.pitch;
         // inputs are consumed (acked) but the dead and the frozen don't move
         if (p.dead || this.frozen) continue;
@@ -468,6 +478,8 @@ export class Room {
           if (t >= timing.reload) p.reloadStart = -1;
         }
       }
+      if (active || p.dead || this.frozen || !others) p.idle = 0;
+      else p.idle++;
       if (p.dead && this.respawning && this.tick >= p.respawnTick) this._respawn(p);
     }
     this._updateNades();

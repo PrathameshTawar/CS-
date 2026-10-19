@@ -115,6 +115,21 @@ the rules without sockets; `index.js` adds HTTP + WebSocket, rooms and the
 - The client predicts with the same `stepMove`, rewinds to each snapshot and
   replays unacknowledged inputs; with 200 ms RTT the correction is 0 m.
   Remote players render 100 ms in the past, interpolated between snapshots.
+- The welcome carries a resume token. A connection that drops (any close but
+  1000/1001/1005, the deliberate ones) leaves its player in the room, away,
+  for 30 s; a hello with the token in that time takes the same player back
+  (`resumed: true`). The client reconnects on its own (`reconnecting`,
+  frozen, retrying every 2 s for 25 s) and resets its prediction buffers;
+  if the hold ran out it's a fresh join under a new id. Kicked players
+  can't resume. A resume also takes over a player whose old connection the
+  server hasn't noticed is dead. Dead links are found from both ends: the
+  server pings every 10 s and drops a client that missed the last pong; the
+  client treats 5 s without a message as a dropped link.
+- Idle players: `Room` counts ticks a living, unfrozen player with company
+  sends no movement, look change or action (`player.idle`); the server
+  kicks at `rules.afkTicks` (90 s) with error code `afk`.
+- WebSocket compression is opt-in (`COMPRESS=1`): about 5x less traffic
+  for about 4x the server CPU.
 - The net system connects on its first frame, after boot: shader prewarm can
   block the page for seconds and would otherwise stall the handshake.
 - Shots and reloads ride the input stream, tagged with the input seq they
