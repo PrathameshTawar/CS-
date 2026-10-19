@@ -142,23 +142,32 @@ export class CollisionWorld {
 
   // Move a player AABB by delta (axis-separated). `pos` is the CENTER of the
   // box, `half` its extents. Boxes whose tops are within `stepH` of the feet
-  // are stepped onto instead of blocking. Returns { grounded, surface }.
-  moveCharacter(pos, half, delta, stepH) {
+  // are stepped onto instead of blocking. Moving down, the feet land on a
+  // floor they cross this move, or one up to `snapDown` below where they end
+  // (a grounded walker keeps to stairs and slopes; a faller passes 0 and
+  // drops through the air). The default keeps everything glued to the
+  // highest floor beneath it, however far (the single-player bots, which have
+  // no gravity). Returns { grounded, surface }.
+  moveCharacter(pos, half, delta, stepH, snapDown = Infinity) {
     const out = this._out;
     out.grounded = false;
     out.surface = 'concrete';
     this._axis(pos, half, delta, 0, stepH);
     this._axis(pos, half, delta, 2, stepH);
     // vertical
+    const feetBefore = pos.y - half.y;
     pos.y += delta.y;
     if (delta.y <= 0) {
       let top = -Infinity;
       let gb = null;
+      const lowest = pos.y - half.y - snapDown - 1e-4;
+      const highest = feetBefore + stepH + 0.02; // a step-up, at most
       const boxes = this.boxes;
       for (let i = 0; i < boxes.length; i++) {
         const b = boxes[i];
         if (!this._overlapXZ(pos, half, b)) continue;
         if (pos.y - half.y < b.min[1] - 0.02) continue; // feet below a floor
+        if (b.max[1] < lowest || b.max[1] > highest) continue; // out of reach: fell past nothing, or too tall to step onto
         if (b.max[1] > top) {
           top = b.max[1];
           gb = b;

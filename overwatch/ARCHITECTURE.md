@@ -91,7 +91,7 @@ functions, not a subsystem.
 |---|---|
 | `shared/rng.js` | the seeded PRNG (`src/core/rng.js` re-exports it) |
 | `shared/collision.js` | `CollisionWorld`: slab raycasts, overlap tests, the axis-separated character mover. It resolves overlap after each move instead of sweeping, so per-step deltas must stay small (fixed steps keep them under 10 cm) |
-| `shared/movement.js` | `createMoveState`, `stepMove`: one fixed step of walk/run/crouch/jump |
+| `shared/movement.js` | `createMoveState`, `stepMove`: one fixed step of walk/run/crouch/jump/fall (on the ground it follows steps down; in the air it falls until it lands), `settle` (a spawn put down on the floor), `fallDamage` |
 | `shared/map.js` | `layoutRng(seed)`, and `buildColliders(seed)`, which runs the world headlessly in Node and returns its static colliders |
 | `shared/combat.js` | rifle constants, damage, the bullet trace (`traceShot`) and player hitboxes |
 | `shared/lobby.js` | finding a match: room codes, the room-list address, Quick Play's pick, invite links |
@@ -125,6 +125,10 @@ the rules without sockets; `index.js` adds HTTP + WebSocket, rooms and the
 - Lag compensation: the server records every player's hitbox each tick (64
   ticks kept) and rewinds the other players to the tick the shooter saw,
   at most 400 ms back.
+- Fall damage is the server's: a landing step faster than
+  `SAFE_FALL_SPEED` costs `fallDamage(impact)`, sent as `EV_HIT` from
+  shooter 0 (the world), and a deadly one is `EV_KILL` with `KILL_BY_FALL`.
+  The client predicts the landing (camera dip, shake, sound), not the damage.
 - The client's weapon still traces locally for instant tracers and blood:
   `net` gives remote players client-side `flesh` hitboxes. Damage,
   hitmarkers, kills and respawns come only from the server.

@@ -38,7 +38,7 @@ export class SpectateSystem {
     this._html = '';
     this._subs = [
       ctx.events.on('player:kill', (k) => {
-        if (k.onMe) this._killer = { id: k.killerId, name: k.killer, weapon: k.weapon, headshot: k.headshot, bomb: k.bomb };
+        if (k.onMe) this._killer = { id: k.killerId, name: k.killer, weapon: k.weapon, headshot: k.headshot, bomb: k.bomb, fall: k.fall };
       }),
     ];
   }
@@ -124,6 +124,7 @@ export class SpectateSystem {
     let who = 'YOU DIED';
     if (k && k.bomb) who = 'KILLED BY THE BOMB';
     else if (k && k.name) who = `KILLED BY <b style="color:#fca5a5">${esc(k.name)}</b>${k.weapon ? ` · ${esc(k.weapon)}` : ''}${k.headshot ? ' · HEADSHOT' : ''}`;
+    else if (k && k.fall) who = 'YOU FELL TO YOUR DEATH';
     else if (k) who = 'YOU FELL OFF THE MAP';
     const next = willSpectate ? 'spectating your team next' : teamRound ? 'back in next round' : 'respawning…';
     return `${who}<div style="font-size:11px;color:#94a3b8">${next}</div>`;

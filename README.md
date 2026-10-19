@@ -199,15 +199,18 @@ menu can always point to a different server.
 Local and LAN play over `ws://` work from `npm run dev`.
 
 `npm test` covers the shared gameplay and the server: rebuilding the
-browser's map from the seed, movement and bullets matching traces recorded
-from the original game bit for bit, client prediction landing exactly on the
+browser's map from the seed, movement and bullets matching recorded traces
+bit for bit, falls and landing damage, client prediction landing exactly on the
 server's state, the anti-speed-hack limit, all the combat rules including
 lag compensation, the whole round and match flow, and real WebSocket
 clients moving and fighting.
 
 Known behaviours the multiplayer work still has to account for:
-- Falling is instant: the mover snaps the player onto the highest surface
-  below them, so drops and the 60 m spawn land in one step.
+- Falls are real arcs, and a hard landing hurts: a drop of about 3.4 m is
+  free, 8 m costs about half your health, and about 15 m (full fall speed)
+  kills. Armour doesn't help. Online the server decides; the kill feed shows
+  "FELL TO THEIR DEATH", with no kill credit. Spawns are put straight down
+  onto the ground, not dropped from the sky.
 - The plaza has no edge walls. Walking or jumping off it is a death (feet
   below y = -20): no kill credit online, and it counts toward a team
   elimination. The arena has walls all round.
