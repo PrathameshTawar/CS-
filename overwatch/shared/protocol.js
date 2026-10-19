@@ -27,7 +27,9 @@
 //     { t: 'sell', w }                          sell back weapon id w
 //     { t: 'ping', c }                          c: client clock (ms)
 //   server -> client
-//     { t: 'welcome', id, token, seed, room, tick, resumed? }
+//     { t: 'welcome', id, name, token, seed, room, tick, resumed? }
+//                                               name: what others see us as
+//                                               (shared/names.js)
 //                                               token: for a later resume
 //                                               (kept 30 s after a drop)
 //     { t: 'snap', tick, ack, you, me, players, ev }

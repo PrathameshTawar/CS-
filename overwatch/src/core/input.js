@@ -16,7 +16,8 @@ const KEYMAP = {
   left: ['KeyA', 'ArrowLeft'],
   right: ['KeyD', 'ArrowRight'],
   sprint: ['ShiftLeft', 'ShiftRight'],
-  crouch: ['ControlLeft', 'ControlRight'],
+  // C as well: Ctrl+W (crouch-walking) closes a browser tab
+  crouch: ['ControlLeft', 'ControlRight', 'KeyC'],
   jump: ['Space'],
   reload: ['KeyR'],
   leanLeft: ['KeyQ'],

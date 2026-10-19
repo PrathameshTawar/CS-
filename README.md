@@ -207,6 +207,21 @@ and defuse, and fight with a human-like reaction time and aim; they can't
 see through smoke. The menu's "Fill empty seats with bots" box turns them
 off for matches you start. Nine bots cost about 0.2% of a CPU core.
 
+For testers and the public:
+- The first time someone plays, a controls card comes up (Esc → CONTROLS
+  shows it again). Crouch is C as well as Ctrl, since Ctrl+W closes a
+  browser tab.
+- Names go through a filter on the server: slurs and obscenities (English
+  and Hindi, caught through spacing, symbols and look-alike digits) become
+  "player", and nobody can call themselves "BOT …".
+- Esc → FEEDBACK sends a message to the game server with the map, mode,
+  ping, fps and browser. Page errors report themselves the same way (each
+  once, at most five a session). Read them at
+  `https://<your server>/feedback?key=<FEEDBACK_KEY>`: set `FEEDBACK_KEY`
+  in the server's environment (on Render: Environment → Add variable).
+  Reports are kept in memory and in the server log; `FEEDBACK_FILE=<path>`
+  also appends them to a file, on a disk that survives restarts.
+
 Online, a dropped connection isn't the end of the match: the game shows
 CONNECTION LOST and reconnects for up to 25 s, and the server holds the
 player (standing where they were, score and gear kept) for 30 s. Leaving on

@@ -74,7 +74,7 @@ export class MySystem {
 | `buy` | `src/buy/` | the buy menu (B), money and buy-time HUD; online it asks the server through `net` |
 | `fx` | `src/fx/` | GPU particles, muzzle flash, tracers, impacts, decals, smoke, blood, shells |
 | `ai` | `src/ai/` | enemy characters, navigation, perception, cover selection, combat behaviour |
-| `ui` | `src/ui/` | HUD, crosshair, hitmarkers, damage indicators, ammo, killfeed, menus, the settings panel (`src/ui/settings.js`; the stored values and their rules are `src/core/settings.js`) |
+| `ui` | `src/ui/` | HUD, crosshair, hitmarkers, damage indicators, ammo, killfeed, menus, the settings panel (`src/ui/settings.js`; the stored values and their rules are `src/core/settings.js`), the first-play controls card (`src/ui/controls.js`), feedback and error reports (`src/ui/feedback.js`) |
 | `audio` | `src/audio/` | synthesized weapon/foley audio, spatialisation, reverb, occlusion, mix |
 | `net` | `src/net/` | multiplayer client (only with `?server=`): input upload, prediction/reconciliation, remote-player interpolation and stand-in meshes. Replaces `ai` when online |
 
@@ -95,6 +95,7 @@ functions, not a subsystem.
 | `shared/map.js` | `layoutRng(seed)`, and `buildColliders(seed)`, which runs the world headlessly in Node and returns its static colliders |
 | `shared/combat.js` | rifle constants, damage, the bullet trace (`traceShot`) and player hitboxes |
 | `shared/nav.js` | where players can walk, for bots: a 0.5 m grid of standable floor built from the colliders (only what's reachable from a spawn), straight-walk checks and A* paths |
+| `shared/names.js` | the name filter the server applies (`playerName`): slurs and obscenities, through tricks, and no "BOT …" |
 | `shared/lobby.js` | finding a match: room codes, the room-list address, Quick Play's pick, invite links |
 | `shared/grenades.js` | grenade table, the deterministic flight (`stepFlight`), HE damage and flash duration |
 | `shared/bomb.js` | Bomb Defusal numbers (plant/defuse/bomb times, radius, rewards) and `siteAt` |
@@ -140,6 +141,11 @@ the rules without sockets; `index.js` adds HTTP + WebSocket, rooms and the
   and defuse, or hunt. `Room.balanceBots()` keeps `bots` players in even
   teams as people come and go; a full room drops a bot for a person; the
   room list counts people (`players`) and `bots` separately.
+- Feedback: `POST /feedback` takes `{ kind: 'feedback' | 'error', text,
+  info }` (text/plain, so no CORS preflight from other sites; 6 KB; 20
+  per address per 10 min; no addresses stored); `GET /feedback?key=`
+  shows them when `FEEDBACK_KEY` matches, else 404. The client side is
+  `src/ui/feedback.js` (the pause menu's box, and uncaught errors).
 - WebSocket compression is opt-in (`COMPRESS=1`): about 5x less traffic
   for about 4x the server CPU.
 - The net system connects on its first frame, after boot: shader prewarm can
