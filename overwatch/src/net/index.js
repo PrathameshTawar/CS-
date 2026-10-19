@@ -76,6 +76,11 @@ const TEAM_UNIFORMS = [0xb0552e, 0x2f5fb0]; // ALPHA orange, BRAVO blue (fabric 
 const STEP_WALK = 2.2; // m between footsteps (matches the local player)
 const STEP_RUN = 3.4;
 const TEAM_CSS = ['#ff9a6a', '#7fb4ff'];
+// After a dropped connection, try to come back as the same player (the
+// server holds us for 30 s) every RETRY_MS for up to RECONNECT_MS.
+const RECONNECT_MS = 25000;
+const RETRY_MS = 2000;
+const SILENCE_MS = 5000; // no message for this long online: the link is dead
 
 export class NetSystem {
   static id = 'net';
@@ -88,7 +93,11 @@ export class NetSystem {
     this.weapons = ctx.get('weapons');
     this.player.serverAuthority = true;
     this.id = 0;
-    this.status = 'connecting';
+    this.status = 'connecting'; // 'online', 'reconnecting', 'error' or 'left'
+    this._token = null; // from the welcome: resumes us after a drop
+    this._retryAt = 0;
+    this._giveUpAt = 0;
+    this._heardAt = 0; // when the server last sent anything
     this.rtt = 0;
     this.kills = 0;
     this.deaths = 0;
@@ -203,12 +212,39 @@ export class NetSystem {
     }
     this.ws = ws;
     ws.onopen = () => {
-      ws.send(encode({ t: 'hello', v: PROTOCOL_VERSION, name: cfg.playerName, room: cfg.room, mode: cfg.mode, map: cfg.map, private: cfg.privateRoom }));
+      // coming back: to the room the server named, as the player it held
+      const back = this.status === 'reconnecting';
+      const room = back ? this.room : cfg.room;
+      ws.send(encode({ t: 'hello', v: PROTOCOL_VERSION, name: cfg.playerName, room, mode: cfg.mode, map: cfg.map, private: cfg.privateRoom, resume: back ? this._token : undefined }));
     };
-    ws.onmessage = (e) => this._onMessage(decode(e.data));
+    ws.onmessage = (e) => {
+      this._heardAt = performance.now();
+      this._onMessage(decode(e.data));
+    };
     ws.onclose = (e) => {
-      if (this.status !== 'error') this._fail(e.reason || 'disconnected');
+      if (ws !== this.ws || this.status === 'error' || this.status === 'left') return;
+      if (this.status === 'online' && this._token) {
+        // dropped: hold still and try to get back in as the same player
+        this.status = 'reconnecting';
+        this._giveUpAt = performance.now() + RECONNECT_MS;
+        this._retryAt = performance.now() + 500;
+        this.player.frozen = true;
+      } else if (this.status === 'reconnecting') {
+        this._retryAt = performance.now() + RETRY_MS; // that attempt failed too
+      } else {
+        this._fail(e.reason || 'disconnected');
+      }
     };
+  }
+
+  // Reconnecting: another attempt when it's due, or give up.
+  _retry() {
+    const now = performance.now();
+    if (now >= this._giveUpAt) return this._fail('connection lost');
+    const open = this.ws && (this.ws.readyState === WebSocket.OPEN || this.ws.readyState === WebSocket.CONNECTING);
+    if (open || now < this._retryAt) return;
+    this._retryAt = now + RETRY_MS;
+    this._connect(this.ctx.config.server);
   }
 
   // Purchases go straight to the server; the next snapshot shows the result.
@@ -263,7 +299,25 @@ export class NetSystem {
         location.replace(url.href);
         return;
       }
+      if (this.status === 'reconnecting') {
+        // back: the server's state from here on, nothing of the old link's
+        this._count = 0;
+        this._buffer.length = 0;
+        this._snap = null;
+        this._tickOffset = null;
+        this._outbox = [];
+        this._shots = [];
+        this._reloads = [];
+        this._switches = [];
+        this._throws = [];
+        // the hold ran out (or the server restarted): we joined as someone new
+        if (msg.id !== this.id) {
+          this._clearRemotes();
+          this._spawns = -1;
+        }
+      }
       this.id = msg.id;
+      this._token = msg.token || null;
       this.room = msg.room;
       this.status = 'online';
     } else if (msg.t === 'snap') {
@@ -400,7 +454,7 @@ export class NetSystem {
   // Runs right after the player's fixed step (deps order): record and send
   // the input it just moved with, then reconcile against any new snapshot.
   fixedUpdate(h, ctx) {
-    if (!this.id) return;
+    if (!this.id || this.status !== 'online') return; // reconnecting: frozen, nothing to send
     const p = this.player;
     const mi = p.lastMoveInput;
 
@@ -459,6 +513,15 @@ export class NetSystem {
     // Connect only once the game is running: boot compiles shaders and can
     // block the page for seconds, which would stall the handshake.
     if (!this.ws && this.status === 'connecting') this._connect(ctx.config.server);
+    if (this.status === 'reconnecting') this._retry();
+    else if (this.status === 'online' && performance.now() - this._heardAt > SILENCE_MS) {
+      // snapshots come 20 times a second: this silence is a dead link the
+      // browser hasn't noticed yet; drop it and reconnect
+      const ws = this.ws;
+      ws.onclose({ reason: 'silent' });
+      ws.onclose = null;
+      ws.close(4000, 'silent');
+    }
     this._pingT += dt;
     if (this._pingT >= PING_EVERY && this.ws && this.ws.readyState === WebSocket.OPEN) {
       this._pingT = 0;
@@ -629,6 +692,8 @@ export class NetSystem {
         (this.player.dead ? (this.game && !this.game[7] && this.game[0] !== PHASE_WARMUP ? ' · DEAD' : ' · RESPAWNING…') : '');
     } else if (this.status === 'error') {
       text = `OFFLINE · ${this.error}`;
+    } else if (this.status === 'reconnecting') {
+      text = `CONNECTION LOST · RECONNECTING… ${Math.max(0, Math.ceil((this._giveUpAt - performance.now()) / 1000))}s`;
     } else {
       text = 'CONNECTING…';
     }

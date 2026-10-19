@@ -6,12 +6,15 @@
 // angles (yaw/pitch) are the only client-owned state, as in every FPS.
 //
 //   client -> server
-//     { t: 'hello', v, name, room, mode?, map?, private? }
+//     { t: 'hello', v, name, room, mode?, map?, private?, resume? }
 //                                               first message, once; mode
 //                                               ('bomb' | 'teams' | 'dm'),
 //                                               map and private (left out of
 //                                               GET /rooms) apply when the
-//                                               hello creates the room
+//                                               hello creates the room;
+//                                               resume: a welcome's token,
+//                                               to come back as that player
+//                                               after a dropped connection
 //     { t: 'input', i: [[seq, f, r, flags, yaw, pitch], ...],
 //       f?: [[seq, ox, oy, oz, dx, dy, dz, viewTick], ...],   shots
 //       r?: [seq, ...],                                       reload starts
@@ -23,10 +26,13 @@
 //     { t: 'sell', w }                          sell back weapon id w
 //     { t: 'ping', c }                          c: client clock (ms)
 //   server -> client
-//     { t: 'welcome', id, seed, room, tick }
+//     { t: 'welcome', id, token, seed, room, tick, resumed? }
+//                                               token: for a later resume
+//                                               (kept 30 s after a drop)
 //     { t: 'snap', tick, ack, you, me, players, ev }
 //     { t: 'pong', c }
-//     { t: 'error', code, message }             then the socket closes
+//     { t: 'error', code, message }             then the socket closes (code
+//                                               'afk': idle too long)
 //
 // Shots, reloads and switches carry the seq of the input step they happen BEFORE, so
 // the server resolves them against exactly the state the client fired from.
