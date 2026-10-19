@@ -11,6 +11,10 @@
 
 import { defaultServerUrl } from '../core/config.js';
 import { SettingsPanel } from './settings.js';
+import { inviteUrl, pickQuickPlay, readInvite, roomCode, roomsUrl } from '../../shared/lobby.js';
+
+const MODE_LABELS = { bomb: 'BOMB DEFUSAL', teams: 'TEAM ROUNDS', dm: 'DEATHMATCH' };
+const ROOMS_POLL_MS = 4000;
 
 const DEFAULT_SERVER = defaultServerUrl(location, import.meta.env?.VITE_SERVER_URL);
 
@@ -59,6 +63,7 @@ export class MenuManager {
   init() {
     if (this.ctx.config.shot) return; // never render in headless screenshot capture
 
+    this._rooms = []; // the last room list (GET /rooms)
     this._injectStyles();
     this._buildPauseModal();
     this._buildStartMenu();
@@ -71,6 +76,9 @@ export class MenuManager {
     // If root address with no parameters, present Start Menu
     if (!hasExplicitPlay) {
       this.showStartMenu();
+      // an invite link (?join=CODE): straight to multiplayer with that room
+      const invite = readInvite(location.href);
+      if (invite) this._showInvite(invite);
     }
   }
 
@@ -406,6 +414,17 @@ export class MenuManager {
 
         <!-- Multiplayer Panel -->
         <div class="ow-menu-body" id="tab-mp-panel" style="display:none;">
+          <div id="mp-invite" style="display:none;margin-bottom:14px;padding:10px 12px;border-radius:6px;background:rgba(59,130,246,.15);border:1px solid rgba(96,165,250,.45);color:#dbeafe;font-size:13px;"></div>
+
+          <div class="ow-field-group">
+            <label class="ow-field-label" style="display:flex;justify-content:space-between">Live rooms <span id="mp-rooms-status" style="text-transform:none;letter-spacing:0;color:#7089a8"></span></label>
+            <div id="mp-rooms" style="max-height:150px;overflow-y:auto;display:flex;flex-direction:column;gap:6px;"></div>
+            <div style="display:flex;gap:10px;margin-top:10px;">
+              <button class="ow-secondary-btn" id="mp-quick-btn" style="margin:0;flex:1;">⚡ QUICK PLAY</button>
+              <button class="ow-secondary-btn" id="mp-private-btn" style="margin:0;flex:1;">🔒 CREATE PRIVATE MATCH</button>
+            </div>
+          </div>
+
           <div style="display:grid;grid-template-columns:1fr 1fr;gap:12px;margin-bottom:14px;">
             <div class="ow-field-group" style="margin:0;">
               <label class="ow-field-label">Player Name</label>
@@ -443,7 +462,7 @@ export class MenuManager {
             </div>
           </div>
 
-          <button class="ow-primary-btn" id="mp-join-btn">CONNECT & JOIN MATCH</button>
+          <button class="ow-primary-btn" id="mp-join-btn">CONNECT & JOIN ROOM</button>
         </div>
 
         <div class="ow-menu-footer">
@@ -471,6 +490,13 @@ export class MenuManager {
           <button class="ow-secondary-btn" id="pause-exit-btn" style="flex:1;margin:0;background:rgba(239,68,68,0.18);border-color:rgba(239,68,68,0.4);color:#fca5a5;">EXIT MATCH</button>
         </div>
         <button class="ow-secondary-btn" id="pause-settings-btn" style="margin-top:12px;">⚙ SETTINGS</button>
+        <div id="pause-invite" style="display:none;margin-top:18px;text-align:left;">
+          <label class="ow-field-label">Invite friends to this room</label>
+          <div style="display:flex;gap:8px;">
+            <input type="text" readonly class="ow-input-text" id="pause-invite-link" style="flex:1;font-size:12px;" />
+            <button class="ow-secondary-btn" id="pause-invite-copy" style="margin:0;width:auto;padding:0 16px;">COPY</button>
+          </div>
+        </div>
       </div>
     `;
 
@@ -492,11 +518,47 @@ export class MenuManager {
       panelMp.style.display = 'none';
     });
 
-    tabMpBtn.addEventListener('click', () => {
+    tabMpBtn.addEventListener('click', () => this._showMultiplayerTab());
+    this._showMultiplayerTab = () => {
       tabMpBtn.classList.add('active');
       tabSpBtn.classList.remove('active');
       panelSp.style.display = 'none';
       panelMp.style.display = 'block';
+      this._pollRooms();
+    };
+
+    // live rooms, Quick Play, private matches
+    this._el.querySelector('#mp-quick-btn').addEventListener('click', () => this._quickPlay());
+    this._el.querySelector('#mp-private-btn').addEventListener('click', () => {
+      this._readFields();
+      this.prefs.room = roomCode();
+      this.joinMultiplayer({ private: true });
+    });
+    this._el.querySelector('#mp-rooms').addEventListener('click', (e) => {
+      const row = e.target.closest('[data-room]');
+      if (!row) return;
+      const r = this._rooms.find((x) => x.name === row.dataset.room);
+      if (!r) return;
+      this._readFields();
+      this.prefs.room = r.name;
+      this.prefs.mode = r.mode;
+      this.joinMultiplayer({ map: r.map });
+    });
+
+    // the invite link in the pause menu
+    this._pauseEl.querySelector('#pause-invite-copy').addEventListener('click', () => {
+      const input = this._pauseEl.querySelector('#pause-invite-link');
+      const done = () => {
+        const b = this._pauseEl.querySelector('#pause-invite-copy');
+        b.textContent = 'COPIED';
+        setTimeout(() => (b.textContent = 'COPY'), 1500);
+      };
+      if (navigator.clipboard && navigator.clipboard.writeText) navigator.clipboard.writeText(input.value).then(done, () => input.select());
+      else {
+        input.select();
+        document.execCommand('copy');
+        done();
+      }
     });
 
     // Single player map choice
@@ -542,15 +604,7 @@ export class MenuManager {
 
     // Multiplayer Join button
     this._el.querySelector('#mp-join-btn').addEventListener('click', () => {
-      const serverInput = this._el.querySelector('#mp-server-input');
-      const nameInput = this._el.querySelector('#mp-name-input');
-      const roomInput = this._el.querySelector('#mp-room-input');
-
-      this.prefs.server = serverInput.value.trim() || DEFAULT_SERVER;
-      this.prefs.name = nameInput.value.trim() || 'player';
-      this.prefs.room = roomInput.value.trim() || 'public';
-      this.savePrefs();
-
+      this._readFields();
       this.joinMultiplayer();
     });
 
@@ -616,6 +670,7 @@ export class MenuManager {
 
   hideStartMenu() {
     this.isOpen = false;
+    clearTimeout(this._roomsTimer);
     this._el.classList.remove('active');
     this.ctx.time.state.scale = 1;
   }
@@ -623,6 +678,10 @@ export class MenuManager {
   showPauseMenu() {
     if (this.isOpen) return;
     this.isPauseOpen = true;
+    const cfg = this.ctx.config;
+    const box = this._pauseEl.querySelector('#pause-invite');
+    box.style.display = cfg.server ? 'block' : 'none';
+    if (cfg.server) this._pauseEl.querySelector('#pause-invite-link').value = inviteUrl(location.href, cfg.room, cfg.server, DEFAULT_SERVER);
     this._pauseEl.classList.add('active');
     document.exitPointerLock();
     // Single player pauses behind the menu; online the match goes on.
@@ -668,17 +727,99 @@ export class MenuManager {
     location.href = url.href;
   }
 
-  joinMultiplayer() {
+  // `map`: an existing room's map (saves a reload); `private`: a new room
+  // that stays out of the room list.
+  joinMultiplayer({ map = null, private: hidden = false } = {}) {
     this.savePrefs();
     const url = new URL(location.href);
     url.search = '';
     url.searchParams.set('server', this.prefs.server);
     url.searchParams.set('name', this.prefs.name);
-    url.searchParams.set('map', this.prefs.mode === 'dm' ? this.prefs.map : 'arena'); // team modes play the arena
+    url.searchParams.set('map', map || (this.prefs.mode === 'dm' ? this.prefs.map : 'arena')); // team modes play the arena
     url.searchParams.set('mode', this.prefs.mode);
     url.searchParams.set('room', this.prefs.room);
+    if (hidden) url.searchParams.set('private', '1');
 
     location.href = url.href;
+  }
+
+  // Name, room and server from the fields into prefs.
+  _readFields() {
+    const q = (id) => this._el.querySelector(id).value.trim();
+    this.prefs.server = q('#mp-server-input') || DEFAULT_SERVER;
+    this.prefs.name = q('#mp-name-input') || 'player';
+    this.prefs.room = q('#mp-room-input') || 'public';
+    this.savePrefs();
+  }
+
+  // The room list, refreshed while the multiplayer tab is open.
+  async _pollRooms() {
+    clearTimeout(this._roomsTimer);
+    if (!this.isOpen) return;
+    const status = this._el.querySelector('#mp-rooms-status');
+    try {
+      this._rooms = await this._fetchRooms();
+      status.textContent = `${this._rooms.length} open · ${this._rooms.reduce((n, r) => n + r.players, 0)} playing`;
+    } catch {
+      this._rooms = [];
+      status.textContent = 'server not reachable';
+    }
+    this._renderRooms();
+    this._roomsTimer = setTimeout(() => this._pollRooms(), ROOMS_POLL_MS);
+  }
+
+  async _fetchRooms() {
+    const url = roomsUrl(this._el.querySelector('#mp-server-input').value.trim() || DEFAULT_SERVER);
+    if (!url) throw new Error('bad server address');
+    const res = await fetch(url, { cache: 'no-store' });
+    const body = await res.json();
+    return Array.isArray(body.rooms) ? body.rooms : [];
+  }
+
+  _renderRooms() {
+    const list = this._el.querySelector('#mp-rooms');
+    if (!this._rooms.length) {
+      list.innerHTML = '<div style="color:#7089a8;font-size:12px;padding:8px 2px;">No public matches right now. Quick Play starts one.</div>';
+      return;
+    }
+    const phaseText = (r) => (r.phase === 0 ? 'warmup' : r.mode === 'dm' ? 'in progress' : `round ${r.round} · ${r.score[0]}–${r.score[1]}`);
+    list.innerHTML = this._rooms
+      .map((r) => {
+        const full = r.players >= r.max;
+        return (
+          `<div data-room="${escapeHtml(r.name)}" style="display:flex;justify-content:space-between;align-items:center;gap:10px;padding:8px 10px;border-radius:6px;` +
+          `background:rgba(255,255,255,.04);border:1px solid rgba(255,255,255,.08);cursor:${full ? 'default' : 'pointer'};opacity:${full ? 0.5 : 1};font-size:13px;">` +
+          `<span><b style="color:#e2e8f0">${escapeHtml(r.name)}</b> <span style="color:#7089a8">· ${MODE_LABELS[r.mode] || r.mode} · ${escapeHtml(r.map)} · ${phaseText(r)}</span></span>` +
+          `<span style="color:${full ? '#f87171' : '#7fe08a'};white-space:nowrap">${r.players}/${r.max}${full ? ' FULL' : ''}</span></div>`
+        );
+      })
+      .join('');
+  }
+
+  // The busiest public room in the chosen mode, or a fresh public one.
+  async _quickPlay() {
+    this._readFields();
+    let rooms = [];
+    try {
+      rooms = await this._fetchRooms();
+    } catch {
+      // can't see the list: just try the default room for this mode
+    }
+    const pick = pickQuickPlay(rooms, this.prefs.mode);
+    this.prefs.room = pick ? pick.name : `public-${this.prefs.mode}`;
+    this.joinMultiplayer({ map: pick ? pick.map : null });
+  }
+
+  // Opened from an invite link: the multiplayer tab, room filled in.
+  _showInvite(invite) {
+    this._showMultiplayerTab();
+    this._el.querySelector('#mp-room-input').value = invite.room;
+    if (invite.server) this._el.querySelector('#mp-server-input').value = invite.server;
+    const banner = this._el.querySelector('#mp-invite');
+    banner.style.display = 'block';
+    banner.innerHTML = `You've been invited to room <b>${escapeHtml(invite.room)}</b>. Enter your name and join.`;
+    this._el.querySelector('#mp-join-btn').textContent = `JOIN ${invite.room}`;
+    this._el.querySelector('#mp-name-input').focus();
   }
 
   exitMatch() {
