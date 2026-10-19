@@ -69,3 +69,22 @@ test('a soldier renders at its real height, inside its 1.8 m hitbox', () => {
   const [, crouchTop] = renderedHeight(1);
   assert.ok(crouchTop > 1.0 && crouchTop < 1.2, `crouched top at ${crouchTop.toFixed(2)} m (hitbox 1.1)`);
 });
+
+test('a soldier holds the weapon it is given; the rifle is the default and unchanged', async () => {
+  const { createSoldier, setSoldierWeapon } = await import('../src/characters/soldier.js');
+  const THREE = await import('three');
+  const mats = [new THREE.MeshBasicMaterial(), new THREE.MeshBasicMaterial(), new THREE.MeshBasicMaterial()];
+  const s = createSoldier(mats);
+  const size = () => new THREE.Box3().setFromObject(s.rifle).getSize(new THREE.Vector3());
+  assert.equal(s.weapon, 'rifle');
+  assert.deepEqual(s.rifle.children.map((c) => c.position.toArray().map((v) => +v.toFixed(3))), [[0, 0, 0.1], [0, -0.055, 0.1], [0, -0.035, 0.26]]);
+  const rifleLen = size().z;
+  setSoldierWeapon(s, 'sniper');
+  assert.ok(size().z > rifleLen + 0.2, 'the sniper is longer');
+  assert.equal(s.rifle.children.length, 4, 'with a scope');
+  setSoldierWeapon(s, 'pistol');
+  assert.ok(size().z < rifleLen / 2, 'a pistol is short');
+  const before = s.rifle.children[0];
+  setSoldierWeapon(s, 'pistol');
+  assert.equal(s.rifle.children[0], before, 'same weapon: nothing rebuilt');
+});

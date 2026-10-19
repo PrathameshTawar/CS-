@@ -24,7 +24,7 @@ import * as THREE from 'three';
 import { playerHitbox } from '../../shared/combat.js';
 import { WEAPONS, WEAPON_IDS } from '../../shared/weapons.js';
 import { GRENADES, GRENADE_IDS, grenadeIndex } from '../../shared/grenades.js';
-import { createSoldier, disposeSoldier, poseSoldier } from '../characters/soldier.js';
+import { createSoldier, disposeSoldier, poseSoldier, setSoldierWeapon } from '../characters/soldier.js';
 import { HALF, HALF_Y_CROUCH, stepMove } from '../../shared/movement.js';
 import {
   BOMBEV_DEFUSED,
@@ -316,6 +316,8 @@ export class NetSystem {
         if (killer === me) e.emit('damage:dealt', { target: { remoteId: victim }, amount: 0, headshot: headshot === 1, killed: true, point: null });
         e.emit('player:kill', {
           killer: killer === 0 ? null : this._nameOf(killer), // null: the world (see bomb)
+          killerId: killer,
+          victimId: victim,
           bomb: weaponIdx === KILL_BY_BOMB, // the explosion; otherwise null killer = fell off the map
           victim: this._nameOf(victim),
           headshot: headshot === 1,
@@ -515,7 +517,7 @@ export class NetSystem {
           }
         }
       }
-      this._placeRemote(id, row[7], x, y, z, yaw, pitch, flags, row[10], dt);
+      this._placeRemote(id, row[7], x, y, z, yaw, pitch, flags, row[10], dt, row[11]);
     }
     for (const id of [...this._remotes.keys()]) {
       if (!seen.has(id)) this._removeRemote(id);
@@ -536,7 +538,7 @@ export class NetSystem {
     return mats;
   }
 
-  _placeRemote(id, name, x, y, z, yaw, pitch, flags, team, dt) {
+  _placeRemote(id, name, x, y, z, yaw, pitch, flags, team, dt, weapon = 'rifle') {
     const crouching = (flags & PL_CROUCH) !== 0;
     const dead = (flags & PL_DEAD) !== 0;
     let r = this._remotes.get(id);
@@ -554,6 +556,14 @@ export class NetSystem {
       r = { group, soldier, box, boxed: true, phase: (id * 1.7) % 6.28, crouch: 0, deadT: 0, lastX: x, lastZ: z, stepAcc: 0 };
       this._remotes.set(id, r);
     }
+    // what spectating needs: where they look, their team, alive or not
+    r.name = name;
+    r.team = team;
+    r.dead = dead;
+    r.yaw = yaw;
+    r.pitch = pitch;
+    r.crouching = crouching;
+    setSoldierWeapon(r.soldier, weapon || 'rifle');
 
     // movement from the interpolated positions: drives the walk cycle and steps
     const moved = Math.hypot(x - r.lastX, z - r.lastZ);
@@ -614,7 +624,7 @@ export class NetSystem {
       text =
         `ONLINE · ${this.room} · ${this._remotes.size + 1} players · ${Math.round(this.rtt)} ms` +
         ` · K ${this.kills} / D ${this.deaths}` +
-        (this.player.dead ? ' · RESPAWNING…' : '');
+        (this.player.dead ? (this.game && !this.game[7] && this.game[0] !== PHASE_WARMUP ? ' · DEAD' : ' · RESPAWNING…') : '');
     } else if (this.status === 'error') {
       text = `OFFLINE · ${this.error}`;
     } else {

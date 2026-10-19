@@ -69,6 +69,7 @@ export class MySystem {
 | `player` | `src/player/` | camera feel, sprint/slide/mantle/lean, health; the movement step itself is `shared/movement.js` |
 | `weapons` | `src/weapons/` | the loadout (primary + pistol) and switching, weapon meshes, viewmodel rig, ADS and the sniper scope, recoil, sway, bob, draw/reload/inspect animation, ballistics. Combat clocks run on fixed steps, like the server's |
 | `grenades` | `src/grenades/` | grenades on the client: inventory, throwing (with prediction), flights, smoke clouds, flash blindness, HE blasts; the weapons system holds them (key 4) |
+| `spectate` | `src/spectate/` | while dead online: the death camera (on your killer) and spectating teammates; owns the camera then |
 | `bomb` | `src/bomb/` | Bomb Defusal on the client: the bomb model, plant/defuse bar and hints, beeps, the explosion (online only; the server runs the rules) |
 | `buy` | `src/buy/` | the buy menu (B), money and buy-time HUD; online it asks the server through `net` |
 | `fx` | `src/fx/` | GPU particles, muzzle flash, tracers, impacts, decals, smoke, blood, shells |

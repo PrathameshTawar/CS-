@@ -141,9 +141,13 @@ Works now:
 - AI enemies are switched off online.
 
 - Other players are full soldier models in their team colour (or their own
-  colour in deathmatch). They walk, crouch, aim up and down, and fall when
-  killed, and you hear their gunfire (each weapon sounds different) and
-  footsteps from where they are.
+  colour in deathmatch), holding the weapon they really have out. They
+  walk, crouch, aim up and down, and fall when killed, and you hear their
+  gunfire (each weapon sounds different) and footsteps from where they are.
+- When you die, the camera rises above you and turns to whoever killed you
+  ("KILLED BY bob · Pistol · HEADSHOT"). In a team round you then watch a
+  living teammate over the shoulder until the next round; click or Space
+  switches teammate.
 
 - Armour: Kevlar ($650) and Kevlar + Helmet ($1,000; $350 for the helmet
   alone if your vest is full). Armour absorbs part of each hit, depending
