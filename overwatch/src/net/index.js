@@ -215,7 +215,7 @@ export class NetSystem {
       // coming back: to the room the server named, as the player it held
       const back = this.status === 'reconnecting';
       const room = back ? this.room : cfg.room;
-      ws.send(encode({ t: 'hello', v: PROTOCOL_VERSION, name: cfg.playerName, room, mode: cfg.mode, map: cfg.map, private: cfg.privateRoom, resume: back ? this._token : undefined }));
+      ws.send(encode({ t: 'hello', v: PROTOCOL_VERSION, name: cfg.playerName, room, mode: cfg.mode, map: cfg.map, private: cfg.privateRoom, bots: cfg.bots ? undefined : false, resume: back ? this._token : undefined }));
     };
     ws.onmessage = (e) => {
       this._heardAt = performance.now();

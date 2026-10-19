@@ -9,6 +9,9 @@
 //                                both the page and the game server
 //   COMPRESS   (default off)     1: compress WebSocket messages (less
 //                                bandwidth, much more CPU; see DEFLATE)
+//   BOTS       (default 6)       fill each room with bots up to this many
+//                                players (even teams; people replace them);
+//                                0: no bots
 //
 // Run: `npm run server` from overwatch/, then open the game with
 // `?server=ws://<host>:8787` (and optionally `&room=<name>&name=<you>`).
@@ -103,6 +106,7 @@ export async function startServer({
   rules = {},
   resumeMs = RESUME_MS,
   compress = false,
+  bots = 0,
   heartbeatMs = HEARTBEAT_MS,
   staticDir = null,
   log = console.log,
@@ -146,7 +150,8 @@ export async function startServer({
   const remove = (room, player, why) => {
     clearTimeout(player.awayTimer);
     room.leave(player.id);
-    log(`[leave] ${player.name}#${player.id} <- ${room.name} (${room.size} players${why ? ', ' + why : ''})`);
+    room.balanceBots(); // a bot takes the seat (or the bots go with the last person)
+    log(`[leave] ${player.name}#${player.id} <- ${room.name} (${room.humans} players${why ? ', ' + why : ''})`);
     if (room.size === 0 && rooms.get(room.name) === room) rooms.delete(room.name);
   };
 
@@ -211,18 +216,19 @@ export async function startServer({
           const map = requestedMap === 'plaza' ? 'plaza' : 'arena';
           const colliders = map === 'arena' ? ARENA.boxes : plazaColliders;
           const mapData = map === 'arena' ? ARENA : null;
-          room = new Room(roomName, colliders, { seed, map, mapData, mode, rules, private: msg.private === true });
+          room = new Room(roomName, colliders, { seed, map, mapData, mode, rules, private: msg.private === true, bots: msg.bots === false ? 0 : bots });
           rooms.set(roomName, room);
         }
         const player = room.join(cleanLabel(msg.name, 'player', 16));
         if (!player) return reject(ws, 'room-full', `room "${roomName}" is full`);
+        room.balanceBots();
         clearTimeout(helloTimer);
         player.token = randomBytes(12).toString('hex');
         player.away = false;
         client.room = room;
         client.player = player;
         send(ws, { t: 'welcome', id: player.id, token: player.token, seed, map: room.map, room: roomName, tick: room.tick });
-        log(`[join] ${player.name}#${player.id} -> ${roomName} [${room.mode}/${room.map}] (${room.size} players)`);
+        log(`[join] ${player.name}#${player.id} -> ${roomName} [${room.mode}/${room.map}] (${room.humans} players, ${room.size - room.humans} bots)`);
         return;
       }
 
@@ -315,6 +321,7 @@ if (import.meta.url === pathToFileURL(process.argv[1]).href) {
     seed: Number(process.env.SEED) || 0x5eed1234,
     staticDir: process.env.STATIC_DIR || DEFAULT_STATIC_DIR,
     compress: process.env.COMPRESS === '1',
+    bots: process.env.BOTS === undefined ? 6 : Number(process.env.BOTS) || 0,
   });
   // hosting platforms stop a deploy with SIGTERM: close sockets and exit cleanly
   for (const signal of ['SIGTERM', 'SIGINT']) {

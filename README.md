@@ -199,6 +199,14 @@ about 150-200 players; a 0.1-CPU free tier about 10-20. The server allows at
 most 64 rooms. `COMPRESS=1` cuts the traffic about 5x (to 3 KB/s) but
 roughly quadruples the CPU, so it's off unless bandwidth costs more than CPU.
 
+Bots fill empty seats online, so nobody lands in an empty room: each new
+room is topped up to 6 players (3v3; `BOTS=n` on the server, 0 for none)
+with computer players named `BOT …`, and a person who joins takes a bot's
+place, keeping the teams even. They buy, push a bomb site and plant, hold
+and defuse, and fight with a human-like reaction time and aim; they can't
+see through smoke. The menu's "Fill empty seats with bots" box turns them
+off for matches you start. Nine bots cost about 0.2% of a CPU core.
+
 Online, a dropped connection isn't the end of the match: the game shows
 CONNECTION LOST and reconnects for up to 25 s, and the server holds the
 player (standing where they were, score and gear kept) for 30 s. Leaving on

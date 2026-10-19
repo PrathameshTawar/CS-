@@ -94,6 +94,7 @@ functions, not a subsystem.
 | `shared/movement.js` | `createMoveState`, `stepMove`: one fixed step of walk/run/crouch/jump/fall (on the ground it follows steps down; in the air it falls until it lands), `settle` (a spawn put down on the floor), `fallDamage` |
 | `shared/map.js` | `layoutRng(seed)`, and `buildColliders(seed)`, which runs the world headlessly in Node and returns its static colliders |
 | `shared/combat.js` | rifle constants, damage, the bullet trace (`traceShot`) and player hitboxes |
+| `shared/nav.js` | where players can walk, for bots: a 0.5 m grid of standable floor built from the colliders (only what's reachable from a spawn), straight-walk checks and A* paths |
 | `shared/lobby.js` | finding a match: room codes, the room-list address, Quick Play's pick, invite links |
 | `shared/grenades.js` | grenade table, the deterministic flight (`stepFlight`), HE damage and flash duration |
 | `shared/bomb.js` | Bomb Defusal numbers (plant/defuse/bomb times, radius, rewards) and `siteAt` |
@@ -128,6 +129,17 @@ the rules without sockets; `index.js` adds HTTP + WebSocket, rooms and the
 - Idle players: `Room` counts ticks a living, unfrozen player with company
   sends no movement, look change or action (`player.idle`); the server
   kicks at `rules.afkTicks` (90 s) with error code `afk`.
+- Bots (`server/bots.js`) are room players whose input comes from a `Bot`
+  instead of a socket: each tick it queues one input plus any shot, reload
+  or switch, so the server's own rules move it and time and resolve its
+  shots (lag compensation sees `viewTick` = now). It perceives line of
+  sight against the static map (smoke clouds, tracked by the room, block
+  it), gunfire within 25 m and who shot it; it aims with a 0.4-0.7 s
+  reaction and a settling error plus per-shot spread. Goals come from the
+  mode: carry the bomb to this round's shared site and plant, hold a site
+  and defuse, or hunt. `Room.balanceBots()` keeps `bots` players in even
+  teams as people come and go; a full room drops a bot for a person; the
+  room list counts people (`players`) and `bots` separately.
 - WebSocket compression is opt-in (`COMPRESS=1`): about 5x less traffic
   for about 4x the server CPU.
 - The net system connects on its first frame, after boot: shader prewarm can

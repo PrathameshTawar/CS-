@@ -44,6 +44,7 @@ export class MenuManager {
       mode: saved('ow_mode') || 'bomb',
       room: saved('ow_room') || 'public',
       time: saved('ow_time') || (ctx.config.timeOfDay || 'golden'),
+      bots: saved('ow_bots') !== '0', // matches you start fill empty seats with bots
     };
   }
 
@@ -55,6 +56,7 @@ export class MenuManager {
       localStorage.setItem('ow_mode', this.prefs.mode);
       localStorage.setItem('ow_room', this.prefs.room);
       localStorage.setItem('ow_time', this.prefs.time);
+      localStorage.setItem('ow_bots', this.prefs.bots ? '1' : '0');
     } catch {
       // localStorage may be disabled
     }
@@ -423,6 +425,10 @@ export class MenuManager {
               <button class="ow-secondary-btn" id="mp-quick-btn" style="margin:0;flex:1;">⚡ QUICK PLAY</button>
               <button class="ow-secondary-btn" id="mp-private-btn" style="margin:0;flex:1;">🔒 CREATE PRIVATE MATCH</button>
             </div>
+            <label style="display:flex;align-items:center;gap:8px;margin-top:10px;font-size:12px;color:#a9bad0;cursor:pointer;">
+              <input type="checkbox" id="mp-bots" ${this.prefs.bots ? 'checked' : ''} />
+              Fill empty seats with bots <span style="color:#7089a8">(matches you start; people take their place as they join)</span>
+            </label>
           </div>
 
           <div style="display:grid;grid-template-columns:1fr 1fr;gap:12px;margin-bottom:14px;">
@@ -529,6 +535,10 @@ export class MenuManager {
 
     // live rooms, Quick Play, private matches
     this._el.querySelector('#mp-quick-btn').addEventListener('click', () => this._quickPlay());
+    this._el.querySelector('#mp-bots').addEventListener('change', (e) => {
+      this.prefs.bots = e.target.checked;
+      this.savePrefs();
+    });
     this._el.querySelector('#mp-private-btn').addEventListener('click', () => {
       this._readFields();
       this.prefs.room = roomCode();
@@ -739,6 +749,7 @@ export class MenuManager {
     url.searchParams.set('mode', this.prefs.mode);
     url.searchParams.set('room', this.prefs.room);
     if (hidden) url.searchParams.set('private', '1');
+    if (!this.prefs.bots) url.searchParams.set('bots', '0');
 
     location.href = url.href;
   }
@@ -790,7 +801,8 @@ export class MenuManager {
           `<div data-room="${escapeHtml(r.name)}" style="display:flex;justify-content:space-between;align-items:center;gap:10px;padding:8px 10px;border-radius:6px;` +
           `background:rgba(255,255,255,.04);border:1px solid rgba(255,255,255,.08);cursor:${full ? 'default' : 'pointer'};opacity:${full ? 0.5 : 1};font-size:13px;">` +
           `<span><b style="color:#e2e8f0">${escapeHtml(r.name)}</b> <span style="color:#7089a8">· ${MODE_LABELS[r.mode] || r.mode} · ${escapeHtml(r.map)} · ${phaseText(r)}</span></span>` +
-          `<span style="color:${full ? '#f87171' : '#7fe08a'};white-space:nowrap">${r.players}/${r.max}${full ? ' FULL' : ''}</span></div>`
+          `<span style="color:${full ? '#f87171' : '#7fe08a'};white-space:nowrap">${r.players}/${r.max}${full ? ' FULL' : ''}` +
+          `${r.bots ? ` <span style="color:#7089a8">+${r.bots} bots</span>` : ''}</span></div>`
         );
       })
       .join('');

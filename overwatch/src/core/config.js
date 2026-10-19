@@ -121,6 +121,8 @@ export function resolveConfig() {
     room: url.searchParams.get('room') || 'public',
     // a room this player creates stays out of the public room list
     privateRoom: url.searchParams.has('private'),
+    // a room this player creates fills empty seats with bots (`bots=0`: no)
+    bots: url.searchParams.get('bots') !== '0',
     playerName: url.searchParams.get('name') || 'player',
     // a new room's mode: 'bomb' (Bomb Defusal, default; team rounds on a
     // map without bomb sites), 'teams' (elimination rounds) or 'dm'
