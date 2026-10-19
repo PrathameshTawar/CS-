@@ -119,6 +119,8 @@ export function resolveConfig() {
     // `room` and `name` are optional. Without it the game is single player.
     server: url.searchParams.get('server') || null,
     room: url.searchParams.get('room') || 'public',
+    // a room this player creates stays out of the public room list
+    privateRoom: url.searchParams.has('private'),
     playerName: url.searchParams.get('name') || 'player',
     // a new room's mode: 'bomb' (Bomb Defusal, default; team rounds on a
     // map without bomb sites), 'teams' (elimination rounds) or 'dm'

@@ -6,10 +6,12 @@
 // angles (yaw/pitch) are the only client-owned state, as in every FPS.
 //
 //   client -> server
-//     { t: 'hello', v, name, room, mode? }      first message, once; mode
-//                                               ('bomb' | 'teams' | 'dm')
-//                                               applies when the hello
-//                                               creates the room
+//     { t: 'hello', v, name, room, mode?, map?, private? }
+//                                               first message, once; mode
+//                                               ('bomb' | 'teams' | 'dm'),
+//                                               map and private (left out of
+//                                               GET /rooms) apply when the
+//                                               hello creates the room
 //     { t: 'input', i: [[seq, f, r, flags, yaw, pitch], ...],
 //       f?: [[seq, ox, oy, oz, dx, dy, dz, viewTick], ...],   shots
 //       r?: [seq, ...],                                       reload starts

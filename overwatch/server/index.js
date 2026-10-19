@@ -91,12 +91,19 @@ export async function startServer({
   const root = staticDir && existsSync(join(staticDir, 'index.html')) ? resolve(staticDir) : null;
 
   const http = createServer(async (req, res) => {
-    const health = () => {
-      res.writeHead(200, { 'content-type': 'application/json', 'cache-control': 'no-store' });
-      res.end(JSON.stringify({ ok: true, protocol: PROTOCOL_VERSION, rooms: rooms.size, players: clients.size }));
+    const json = (body) => {
+      // public information; any page (e.g. the Vite dev server) may read it
+      res.writeHead(200, { 'content-type': 'application/json', 'cache-control': 'no-store', 'access-control-allow-origin': '*' });
+      res.end(JSON.stringify(body));
     };
+    const path = req.url.split('?')[0];
+    // the room list for the menu: public rooms only, busiest first
+    if (path === '/rooms') {
+      const list = [...rooms.values()].filter((r) => !r.private).map((r) => r.summary());
+      return json({ protocol: PROTOCOL_VERSION, rooms: list.sort((a, b) => b.players - a.players) });
+    }
     // health check for hosting platforms; also the whole answer when there is no built game
-    if (req.url === '/health' || !root) return health();
+    if (path === '/health' || !root) return json({ ok: true, protocol: PROTOCOL_VERSION, rooms: rooms.size, players: clients.size });
     if ((req.method === 'GET' || req.method === 'HEAD') && (await serveStatic(root, req, res))) return;
     res.writeHead(404, { 'content-type': 'text/plain; charset=utf-8' });
     res.end('not found');
@@ -143,7 +150,7 @@ export async function startServer({
           const map = requestedMap === 'plaza' ? 'plaza' : 'arena';
           const colliders = map === 'arena' ? ARENA.boxes : plazaColliders;
           const mapData = map === 'arena' ? ARENA : null;
-          room = new Room(roomName, colliders, { seed, map, mapData, mode, rules });
+          room = new Room(roomName, colliders, { seed, map, mapData, mode, rules, private: msg.private === true });
           rooms.set(roomName, room);
         }
         const player = room.join(cleanLabel(msg.name, 'player', 16));

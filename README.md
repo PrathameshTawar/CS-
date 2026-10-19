@@ -66,6 +66,18 @@ windows (change `name`; add `&room=<name>` for a private room). Rooms play
 elimination rounds instead, and `&mode=dm` free-for-all deathmatch. Hold
 **Tab** for the scoreboard.
 
+Finding a match (start menu → Multiplayer):
+- **Live rooms** lists the server's public matches (mode, map, round, players)
+  and refreshes every few seconds; click one to join it.
+- **Quick Play** joins the busiest public room in your chosen mode that has
+  space, or starts one.
+- **Create Private Match** makes a room with a random code (like `K7QX2M`)
+  that isn't listed.
+- In a match, **Esc** shows an **invite link** with a Copy button. Whoever
+  opens it lands in the menu with that room filled in: they enter a name and
+  join. The link carries the server address only if it isn't the page's own.
+- The server's room list is at `GET /rooms` (public rooms only).
+
 How Bomb Defusal works:
 1. The attacking team spawns at the south end of the arena and one of them
    carries the bomb. Bomb sites **A** (west lane) and **B** (east lane) are

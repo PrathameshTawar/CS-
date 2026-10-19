@@ -221,8 +221,9 @@ const SPAWN_HEIGHT = 60;
 const IDLE = Object.freeze({ forward: 0, right: 0, jump: false, crouch: false, sprint: false, ads: 0 });
 
 export class Room {
-  constructor(name, colliders, { seed, map = 'plaza', mapData = null, maxPlayers = MAX_PLAYERS_PER_ROOM, mode = MODE_TEAMS, rules = {} } = {}) {
+  constructor(name, colliders, { seed, map = 'plaza', mapData = null, maxPlayers = MAX_PLAYERS_PER_ROOM, mode = MODE_TEAMS, rules = {}, private: hidden = false } = {}) {
     this.name = name;
+    this.private = hidden; // left out of the room list (join by code / invite link)
     this.seed = seed;
     this.map = map;
     this.mapData = mapData;
@@ -261,6 +262,21 @@ export class Room {
 
   get size() {
     return this.players.size;
+  }
+
+  // What the room list (GET /rooms) shows about this room.
+  summary() {
+    const g = this.game;
+    return {
+      name: this.name,
+      mode: this.mode,
+      map: this.map,
+      players: this.players.size,
+      max: this.maxPlayers,
+      phase: g.phase,
+      round: g.round,
+      score: [...g.score],
+    };
   }
 
   // Adds a player; returns it, or null when the room is full.

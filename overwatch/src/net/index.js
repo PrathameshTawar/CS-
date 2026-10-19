@@ -202,7 +202,7 @@ export class NetSystem {
     }
     this.ws = ws;
     ws.onopen = () => {
-      ws.send(encode({ t: 'hello', v: PROTOCOL_VERSION, name: cfg.playerName, room: cfg.room, mode: cfg.mode, map: cfg.map }));
+      ws.send(encode({ t: 'hello', v: PROTOCOL_VERSION, name: cfg.playerName, room: cfg.room, mode: cfg.mode, map: cfg.map, private: cfg.privateRoom }));
     };
     ws.onmessage = (e) => this._onMessage(decode(e.data));
     ws.onclose = (e) => {

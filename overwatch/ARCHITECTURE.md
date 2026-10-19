@@ -93,6 +93,7 @@ functions, not a subsystem.
 | `shared/movement.js` | `createMoveState`, `stepMove`: one fixed step of walk/run/crouch/jump |
 | `shared/map.js` | `layoutRng(seed)`, and `buildColliders(seed)`, which runs the world headlessly in Node and returns its static colliders |
 | `shared/combat.js` | rifle constants, damage, the bullet trace (`traceShot`) and player hitboxes |
+| `shared/lobby.js` | finding a match: room codes, the room-list address, Quick Play's pick, invite links |
 | `shared/grenades.js` | grenade table, the deterministic flight (`stepFlight`), HE damage and flash duration |
 | `shared/bomb.js` | Bomb Defusal numbers (plant/defuse/bomb times, radius, rewards) and `siteAt` |
 | `shared/weapons.js` | the weapon table (prices, fire rate, ammo, damage, spread, draw/reload times) and the round economy |
