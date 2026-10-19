@@ -215,7 +215,7 @@ export class NetSystem {
       // coming back: to the room the server named, as the player it held
       const back = this.status === 'reconnecting';
       const room = back ? this.room : cfg.room;
-      ws.send(encode({ t: 'hello', v: PROTOCOL_VERSION, name: cfg.playerName, room, mode: cfg.mode, map: cfg.map, private: cfg.privateRoom, resume: back ? this._token : undefined }));
+      ws.send(encode({ t: 'hello', v: PROTOCOL_VERSION, name: cfg.playerName, room, mode: cfg.mode, map: cfg.map, private: cfg.privateRoom, bots: cfg.bots ? undefined : false, resume: back ? this._token : undefined }));
     };
     ws.onmessage = (e) => {
       this._heardAt = performance.now();
@@ -317,6 +317,7 @@ export class NetSystem {
         }
       }
       this.id = msg.id;
+      this.name = msg.name || this.ctx.config.playerName; // as the server let it through
       this._token = msg.token || null;
       this.room = msg.room;
       this.status = 'online';
@@ -448,7 +449,7 @@ export class NetSystem {
   }
 
   _nameOf(id) {
-    return id === this.id ? this.ctx.config.playerName : this._names.get(id) || `#${id}`;
+    return id === this.id ? this.name || this.ctx.config.playerName : this._names.get(id) || `#${id}`;
   }
 
   // Runs right after the player's fixed step (deps order): record and send
@@ -742,7 +743,7 @@ export class NetSystem {
     const snap = this._lastSnap;
     if (!snap) return '';
     const rows = snap.players.map((r) => ({ name: r[7], kills: r[8], deaths: r[9], team: r[10], me: false }));
-    rows.push({ name: this.ctx.config.playerName, kills: this.kills, deaths: this.deaths, team: this.team, me: true });
+    rows.push({ name: this.name || this.ctx.config.playerName, kills: this.kills, deaths: this.deaths, team: this.team, me: true });
     const line = (r) =>
       `<tr style="${r.me ? 'color:#fff;font-weight:700' : ''}"><td style="padding-right:24px">${esc(r.name)}${r.me ? ' (you)' : ''}</td>` +
       `<td style="text-align:right;width:40px">${r.kills}</td><td style="text-align:right;width:40px">${r.deaths}</td></tr>`;

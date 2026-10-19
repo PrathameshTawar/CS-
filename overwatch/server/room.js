@@ -87,6 +87,7 @@ import {
   siteAt,
 } from '../shared/bomb.js';
 import { KILL_Y, createMoveState, fallDamage, settle, stepMove } from '../shared/movement.js';
+import { BOT_NAMES, BOT_PREFIX, Bot, chooseSite } from './bots.js';
 import {
   MAX_HEALTH,
   RESPAWN_TIME,
@@ -227,7 +228,9 @@ const SPAWN_HEIGHT = 60;
 const IDLE = Object.freeze({ forward: 0, right: 0, jump: false, crouch: false, sprint: false, ads: 0 });
 
 export class Room {
-  constructor(name, colliders, { seed, map = 'plaza', mapData = null, maxPlayers = MAX_PLAYERS_PER_ROOM, mode = MODE_TEAMS, rules = {}, private: hidden = false } = {}) {
+  // `bots`: fill the room with computer players up to this many players
+  // (even teams), making way for people as they join; 0: none.
+  constructor(name, colliders, { seed, map = 'plaza', mapData = null, maxPlayers = MAX_PLAYERS_PER_ROOM, mode = MODE_TEAMS, rules = {}, private: hidden = false, bots = 0 } = {}) {
     this.name = name;
     this.private = hidden; // left out of the room list (join by code / invite link)
     this.seed = seed;
@@ -260,6 +263,11 @@ export class Room {
     this._eventN = 0;
     this._nextId = 1;
     this._out = { hasWish: false, landed: false, impact: 0 };
+    this.botTarget = Math.min(bots, maxPlayers);
+    this._botRng = createRng(((seed || 1) ^ 0xb075) >>> 0); // independent of the bomb's
+    this._botPlan = null; // where the attackers go this round
+    this.navSeeds = this.spawns; // bots' walkable area: what's reachable from a spawn
+    this.smokes = []; // { x, y, z, until }: smoke clouds blocking bots' sight
     this._end = { x: 0, y: 0, z: 0 };
     this._boxes = []; // rewound hitboxes for the shot being resolved (reused)
     this.nades = []; // grenades in flight: { id, owner, type, flight }
@@ -270,6 +278,13 @@ export class Room {
     return this.players.size;
   }
 
+  // People in the room (bots aside; players reconnecting count).
+  get humans() {
+    let n = 0;
+    for (const p of this.players.values()) if (!p.bot) n++;
+    return n;
+  }
+
   // What the room list (GET /rooms) shows about this room.
   summary() {
     const g = this.game;
@@ -277,7 +292,8 @@ export class Room {
       name: this.name,
       mode: this.mode,
       map: this.map,
-      players: this.players.size,
+      players: this.humans, // people: bots make way, so they don't fill a room
+      bots: this.players.size - this.humans,
       max: this.maxPlayers,
       phase: g.phase,
       round: g.round,
@@ -285,9 +301,14 @@ export class Room {
     };
   }
 
-  // Adds a player; returns it, or null when the room is full.
-  join(name) {
-    if (this.players.size >= this.maxPlayers) return null;
+  // Adds a player; returns it, or null when the room is full. A person
+  // takes a bot's place when there's no room otherwise.
+  join(name, { bot = false, team = null } = {}) {
+    if (this.players.size >= this.maxPlayers) {
+      // a bot from the team the person will play on makes way
+      const t = this.mode === MODE_DM ? null : team ?? this._smallerTeam();
+      if (bot || !(this._dropBot(t) || this._dropBot(null))) return null;
+    }
     const history = [];
     for (let i = 0; i < HISTORY; i++) history.push({ tick: -1, x: 0, y: 0, z: 0, halfY: 0, alive: false });
     const player = {
@@ -313,7 +334,7 @@ export class Room {
       drawEnd: 0, // the held weapon can fire from this step on
       kills: 0,
       deaths: 0,
-      team: this.mode !== MODE_DM ? this._smallerTeam() : -1,
+      team: this.mode === MODE_DM ? -1 : team ?? this._smallerTeam(),
       armor: 0,
       helmet: false,
       kit: false,
@@ -363,10 +384,71 @@ export class Room {
     return [this.freeBuy ? makeGun(DEFAULT_PRIMARY) : null, makeGun(DEFAULT_SECONDARY)];
   }
 
+  // The team with fewer people (bots are moved around to even things up).
   _smallerTeam() {
     const n = [0, 0];
-    for (const p of this.players.values()) if (p.team >= 0) n[p.team]++;
-    return n[1] < n[0] ? 1 : 0;
+    const all = [0, 0];
+    for (const p of this.players.values()) {
+      if (p.team < 0) continue;
+      all[p.team]++;
+      if (!p.bot) n[p.team]++;
+    }
+    if (n[0] !== n[1]) return n[1] < n[0] ? 1 : 0;
+    return all[1] < all[0] ? 1 : 0;
+  }
+
+  // ---- bots ----
+
+  // Adds or removes bots so the room has botTarget players (or as many as
+  // there are people, if more), in even teams. Call after people come or go.
+  balanceBots() {
+    if (this.botTarget <= 0 && this.humans === this.players.size) return;
+    const target = this.humans === 0 ? 0 : Math.max(this.botTarget, this.humans);
+    if (this.mode === MODE_DM) {
+      while (this.players.size > Math.max(target, this.humans) && this._dropBot(null));
+      while (this.players.size < target) this._addBot(-1);
+      return;
+    }
+    const people = [0, 0];
+    const bots = [0, 0];
+    for (const p of this.players.values()) (p.bot ? bots : people)[p.team]++;
+    const perTeam = Math.min(Math.floor(this.maxPlayers / 2), Math.max(Math.ceil(target / 2), people[0], people[1]));
+    const want = [0, 1].map((t) => (this.humans === 0 ? 0 : Math.max(0, perTeam - people[t])));
+    for (const t of [0, 1]) for (let k = bots[t]; k > want[t]; k--) this._dropBot(t); // make room first
+    for (const t of [0, 1]) for (let k = bots[t]; k < want[t] && this.players.size < this.maxPlayers; k++) this._addBot(t);
+  }
+
+  _addBot(team) {
+    const used = new Set([...this.players.values()].map((p) => p.name));
+    const free = BOT_NAMES.filter((n) => !used.has(BOT_PREFIX + n));
+    const name = BOT_PREFIX + (free.length ? free[this._botRng.nextUint32() % free.length] : BOT_NAMES[0]);
+    const p = this.join(name, { bot: true, team: team >= 0 ? team : null });
+    if (!p) return null;
+    p.bot = new Bot(this, p, createRng((this._botRng.nextUint32() || 1) >>> 0));
+    return p;
+  }
+
+  // Removes one bot (from `team`, or any): a dead one if there is one.
+  _dropBot(team) {
+    let pick = null;
+    for (const p of this.players.values()) {
+      if (!p.bot || (team !== null && p.team !== team)) continue;
+      if (!pick || (p.dead && !pick.dead)) pick = p;
+    }
+    if (!pick) return false;
+    this.leave(pick.id);
+    return true;
+  }
+
+  // Where this round's attackers head (shared by every attacking bot).
+  botPlan() {
+    const round = this.game.round;
+    if (!this._botPlan || this._botPlan.round !== round) this._botPlan = { round, ...chooseSite(this.sites, this._botRng) };
+    return this._botPlan;
+  }
+
+  timing(weaponId) {
+    return TIMING[weaponId];
   }
 
   // Free movement and shooting? Not while frozen at round start or after a match.
@@ -444,9 +526,11 @@ export class Room {
   step() {
     this.tick++;
     const others = this.players.size >= 2;
+    if (this.smokes.length) this.smokes = this.smokes.filter((s) => s.until > this.tick);
     for (const p of this.players.values()) {
+      if (p.bot) p.bot.tick(); // queues this tick's input, like a client would
       p.credit = Math.min(MAX_CREDIT, p.credit + 1);
-      let active = false;
+      let active = !!p.bot; // bots are never idle
       while (p.credit >= 1 && p.queue.length) {
         const input = p.queue.shift();
         p.credit -= 1;
@@ -902,6 +986,7 @@ export class Room {
   _detonate(n) {
     const f = n.flight;
     this._emit([EV_NADE_POP, n.id, GRENADE_IDS.indexOf(n.type), r3(f.x), r3(f.y), r3(f.z), n.owner]);
+    if (n.type === 'smoke') this.smokes.push({ x: f.x, y: f.y + 1.5, z: f.z, until: this.tick + GRENADES.smoke.duration * TICK_RATE });
     if (n.type !== 'he') return; // flash and smoke only affect what players see
     const g = GRENADES.he;
     const owner = this.players.get(n.owner) || null;

@@ -13,18 +13,22 @@ export function roomCode(random = Math.random) {
   return s;
 }
 
-// The HTTP address of a game server's room list, from its WebSocket address.
-export function roomsUrl(wsUrl) {
+// The HTTP address of `path` on a game server, from its WebSocket address.
+export function serverHttpUrl(wsUrl, path) {
   try {
     const u = new URL(wsUrl);
     u.protocol = u.protocol === 'wss:' ? 'https:' : 'http:';
-    u.pathname = '/rooms';
+    u.pathname = path;
     u.search = '';
     return u.href;
   } catch {
     return null;
   }
 }
+
+// The room list, and where feedback and error reports go.
+export const roomsUrl = (wsUrl) => serverHttpUrl(wsUrl, '/rooms');
+export const feedbackUrl = (wsUrl) => serverHttpUrl(wsUrl, '/feedback');
 
 // Quick Play: the public room in `mode` with the most players that still has
 // space (a match already going is more fun than an empty one), or null.

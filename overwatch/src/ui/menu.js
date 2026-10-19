@@ -11,6 +11,8 @@
 
 import { defaultServerUrl } from '../core/config.js';
 import { SettingsPanel } from './settings.js';
+import { controlsSeen, showControls } from './controls.js';
+import { gameInfo, reportErrors, sendReport } from './feedback.js';
 import { inviteUrl, pickQuickPlay, readInvite, roomCode, roomsUrl } from '../../shared/lobby.js';
 
 const MODE_LABELS = { bomb: 'BOMB DEFUSAL', teams: 'TEAM ROUNDS', dm: 'DEATHMATCH' };
@@ -44,6 +46,7 @@ export class MenuManager {
       mode: saved('ow_mode') || 'bomb',
       room: saved('ow_room') || 'public',
       time: saved('ow_time') || (ctx.config.timeOfDay || 'golden'),
+      bots: saved('ow_bots') !== '0', // matches you start fill empty seats with bots
     };
   }
 
@@ -55,6 +58,7 @@ export class MenuManager {
       localStorage.setItem('ow_mode', this.prefs.mode);
       localStorage.setItem('ow_room', this.prefs.room);
       localStorage.setItem('ow_time', this.prefs.time);
+      localStorage.setItem('ow_bots', this.prefs.bots ? '1' : '0');
     } catch {
       // localStorage may be disabled
     }
@@ -69,9 +73,13 @@ export class MenuManager {
     this._buildStartMenu();
     this.settings = new SettingsPanel(this.ctx);
     this._wireEvents();
+    // page errors report themselves to the server the game talks to
+    this._offErrors = reportErrors(this.ctx, () => this._feedbackServer());
 
     const url = new URL(location.href);
     const hasExplicitPlay = url.searchParams.has('play') || url.searchParams.has('server');
+    // the first game ever: the controls before anything else
+    if (hasExplicitPlay && !controlsSeen()) this.showControls(true);
 
     // If root address with no parameters, present Start Menu
     if (!hasExplicitPlay) {
@@ -423,6 +431,10 @@ export class MenuManager {
               <button class="ow-secondary-btn" id="mp-quick-btn" style="margin:0;flex:1;">⚡ QUICK PLAY</button>
               <button class="ow-secondary-btn" id="mp-private-btn" style="margin:0;flex:1;">🔒 CREATE PRIVATE MATCH</button>
             </div>
+            <label style="display:flex;align-items:center;gap:8px;margin-top:10px;font-size:12px;color:#a9bad0;cursor:pointer;">
+              <input type="checkbox" id="mp-bots" ${this.prefs.bots ? 'checked' : ''} />
+              Fill empty seats with bots <span style="color:#7089a8">(matches you start; people take their place as they join)</span>
+            </label>
           </div>
 
           <div style="display:grid;grid-template-columns:1fr 1fr;gap:12px;margin-bottom:14px;">
@@ -466,8 +478,8 @@ export class MenuManager {
         </div>
 
         <div class="ow-menu-footer">
-          <div>WASD Move · Shift Sprint · Space Jump · R Reload · 1/2 Switch · B Buy · F Plant/Defuse · Q/E Lean</div>
-          <div>ESC Menu</div>
+          <div>WASD Move · Shift Sprint · Space Jump · C Crouch · R Reload · 1/2 Switch · B Buy · F Plant/Defuse · Q/E Lean</div>
+          <div><a href="#" id="menu-controls-link" style="color:#60a5fa">All controls</a> · ESC Menu</div>
         </div>
       </div>
     `;
@@ -489,7 +501,20 @@ export class MenuManager {
           <button class="ow-primary-btn" id="pause-resume-btn" style="flex:1;margin:0;">RESUME GAME</button>
           <button class="ow-secondary-btn" id="pause-exit-btn" style="flex:1;margin:0;background:rgba(239,68,68,0.18);border-color:rgba(239,68,68,0.4);color:#fca5a5;">EXIT MATCH</button>
         </div>
-        <button class="ow-secondary-btn" id="pause-settings-btn" style="margin-top:12px;">⚙ SETTINGS</button>
+        <div style="display:flex;gap:12px;margin-top:12px;">
+          <button class="ow-secondary-btn" id="pause-settings-btn" style="flex:1;margin:0;">⚙ SETTINGS</button>
+          <button class="ow-secondary-btn" id="pause-controls-btn" style="flex:1;margin:0;">🎮 CONTROLS</button>
+          <button class="ow-secondary-btn" id="pause-feedback-btn" style="flex:1;margin:0;">💬 FEEDBACK</button>
+        </div>
+        <div id="pause-feedback" style="display:none;margin-top:16px;text-align:left;">
+          <label class="ow-field-label">Tell us what broke, or what would make the game better</label>
+          <textarea id="pause-feedback-text" class="ow-input-text" maxlength="1000" rows="4" style="width:100%;box-sizing:border-box;resize:vertical;font:13px/1.4 inherit;"
+            placeholder="e.g. I got stuck on the crate in mid; the sniper feels too strong..."></textarea>
+          <div style="display:flex;gap:8px;align-items:center;margin-top:8px;">
+            <button class="ow-primary-btn" id="pause-feedback-send" style="margin:0;width:auto;padding:10px 22px;">SEND</button>
+            <span id="pause-feedback-status" style="font-size:12px;color:#7089a8;">Sent with your map, mode, ping, fps and browser, to help fix it.</span>
+          </div>
+        </div>
         <div id="pause-invite" style="display:none;margin-top:18px;text-align:left;">
           <label class="ow-field-label">Invite friends to this room</label>
           <div style="display:flex;gap:8px;">
@@ -529,6 +554,10 @@ export class MenuManager {
 
     // live rooms, Quick Play, private matches
     this._el.querySelector('#mp-quick-btn').addEventListener('click', () => this._quickPlay());
+    this._el.querySelector('#mp-bots').addEventListener('change', (e) => {
+      this.prefs.bots = e.target.checked;
+      this.savePrefs();
+    });
     this._el.querySelector('#mp-private-btn').addEventListener('click', () => {
       this._readFields();
       this.prefs.room = roomCode();
@@ -611,6 +640,29 @@ export class MenuManager {
     // Settings (start menu tab and pause dialog)
     this._el.querySelector('#tab-settings-btn').addEventListener('click', () => this.settings.show());
     this._pauseEl.querySelector('#pause-settings-btn').addEventListener('click', () => this.settings.show());
+    this._pauseEl.querySelector('#pause-controls-btn').addEventListener('click', () => this.showControls(false));
+    this._el.querySelector('#menu-controls-link').addEventListener('click', (e) => {
+      e.preventDefault();
+      this.showControls(false);
+    });
+    // feedback: a box in the pause menu, sent to the game server
+    const fbBox = this._pauseEl.querySelector('#pause-feedback');
+    const fbText = this._pauseEl.querySelector('#pause-feedback-text');
+    const fbStatus = this._pauseEl.querySelector('#pause-feedback-status');
+    this._pauseEl.querySelector('#pause-feedback-btn').addEventListener('click', () => {
+      fbBox.style.display = fbBox.style.display === 'none' ? 'block' : 'none';
+      if (fbBox.style.display === 'block') fbText.focus();
+    });
+    this._pauseEl.querySelector('#pause-feedback-send').addEventListener('click', async () => {
+      const text = fbText.value.trim();
+      if (!text) return fbText.focus();
+      fbStatus.textContent = 'Sending…';
+      fbStatus.style.color = '#7089a8';
+      const ok = await sendReport(this._feedbackServer(), 'feedback', text, await gameInfo(this.ctx));
+      fbStatus.textContent = ok ? 'Thanks! We read every message.' : "Couldn't reach the server. Try again in a moment.";
+      fbStatus.style.color = ok ? '#7fe08a' : '#f87171';
+      if (ok) fbText.value = '';
+    });
 
     // Pause Dialog buttons
     this._pauseEl.querySelector('#pause-resume-btn').addEventListener('click', () => {
@@ -656,6 +708,20 @@ export class MenuManager {
       }
       wasLocked = isLocked;
     });
+  }
+
+  // Where feedback goes: the server we play on, or the page's default one.
+  _feedbackServer() {
+    return this.ctx.config.server || DEFAULT_SERVER;
+  }
+
+  // The controls card. `play`: the first game ever (its button takes the
+  // mouse). Single player waits behind it.
+  async showControls(play) {
+    const single = !this.ctx.config.server;
+    if (single) this.ctx.time.state.scale = 0;
+    await showControls({ play, canvas: this.ctx.canvas });
+    if (single && !this.isOpen && !this.isPauseOpen) this.ctx.time.state.scale = 1;
   }
 
   showStartMenu() {
@@ -739,6 +805,7 @@ export class MenuManager {
     url.searchParams.set('mode', this.prefs.mode);
     url.searchParams.set('room', this.prefs.room);
     if (hidden) url.searchParams.set('private', '1');
+    if (!this.prefs.bots) url.searchParams.set('bots', '0');
 
     location.href = url.href;
   }
@@ -790,7 +857,8 @@ export class MenuManager {
           `<div data-room="${escapeHtml(r.name)}" style="display:flex;justify-content:space-between;align-items:center;gap:10px;padding:8px 10px;border-radius:6px;` +
           `background:rgba(255,255,255,.04);border:1px solid rgba(255,255,255,.08);cursor:${full ? 'default' : 'pointer'};opacity:${full ? 0.5 : 1};font-size:13px;">` +
           `<span><b style="color:#e2e8f0">${escapeHtml(r.name)}</b> <span style="color:#7089a8">· ${MODE_LABELS[r.mode] || r.mode} · ${escapeHtml(r.map)} · ${phaseText(r)}</span></span>` +
-          `<span style="color:${full ? '#f87171' : '#7fe08a'};white-space:nowrap">${r.players}/${r.max}${full ? ' FULL' : ''}</span></div>`
+          `<span style="color:${full ? '#f87171' : '#7fe08a'};white-space:nowrap">${r.players}/${r.max}${full ? ' FULL' : ''}` +
+          `${r.bots ? ` <span style="color:#7089a8">+${r.bots} bots</span>` : ''}</span></div>`
         );
       })
       .join('');
@@ -841,6 +909,7 @@ export class MenuManager {
     if (this._el) this._el.remove();
     if (this._pauseEl) this._pauseEl.remove();
     if (this.settings) this.settings.dispose();
+    if (this._offErrors) this._offErrors();
     const style = document.getElementById('ow-menu-styles');
     if (style) style.remove();
   }

@@ -6,12 +6,13 @@
 // angles (yaw/pitch) are the only client-owned state, as in every FPS.
 //
 //   client -> server
-//     { t: 'hello', v, name, room, mode?, map?, private?, resume? }
+//     { t: 'hello', v, name, room, mode?, map?, private?, bots?, resume? }
 //                                               first message, once; mode
 //                                               ('bomb' | 'teams' | 'dm'),
 //                                               map and private (left out of
 //                                               GET /rooms) apply when the
-//                                               hello creates the room;
+//                                               hello creates the room
+//                                               (bots: false, none);
 //                                               resume: a welcome's token,
 //                                               to come back as that player
 //                                               after a dropped connection
@@ -26,7 +27,9 @@
 //     { t: 'sell', w }                          sell back weapon id w
 //     { t: 'ping', c }                          c: client clock (ms)
 //   server -> client
-//     { t: 'welcome', id, token, seed, room, tick, resumed? }
+//     { t: 'welcome', id, name, token, seed, room, tick, resumed? }
+//                                               name: what others see us as
+//                                               (shared/names.js)
 //                                               token: for a later resume
 //                                               (kept 30 s after a drop)
 //     { t: 'snap', tick, ack, you, me, players, ev }

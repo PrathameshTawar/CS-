@@ -9,12 +9,20 @@
 //                                both the page and the game server
 //   COMPRESS   (default off)     1: compress WebSocket messages (less
 //                                bandwidth, much more CPU; see DEFLATE)
+//   FEEDBACK_KEY (default none)  the key that shows players' feedback and
+//                                error reports at /feedback?key=...
+//   FEEDBACK_FILE (default none) also append each report to this file (one
+//                                JSON object a line)
+//   BOTS       (default 6)       fill each room with bots up to this many
+//                                players (even teams; people replace them);
+//                                0: no bots
 //
 // Run: `npm run server` from overwatch/, then open the game with
 // `?server=ws://<host>:8787` (and optionally `&room=<name>&name=<you>`).
 // After `npm run build`, http://<host>:8787/ serves the game itself.
 
-import { randomBytes } from 'node:crypto';
+import { randomBytes, timingSafeEqual } from 'node:crypto';
+import { appendFile } from 'node:fs/promises';
 import { existsSync } from 'node:fs';
 import { readFile, stat } from 'node:fs/promises';
 import { createServer } from 'node:http';
@@ -32,6 +40,7 @@ import {
   encode,
 } from '../shared/protocol.js';
 import { Room } from './room.js';
+import { playerName } from '../shared/names.js';
 
 const MAX_ROOMS = 64;
 const MAX_MESSAGES_PER_SECOND = 120; // inputs arrive ~30/s; pings ~1/s
@@ -56,6 +65,13 @@ const DEFLATE = {
   concurrencyLimit: 16,
 };
 const DEFAULT_STATIC_DIR = fileURLToPath(new URL('../dist', import.meta.url));
+// Feedback and error reports (POST /feedback): kept in memory (newest
+// FEEDBACK_KEEP), logged, optionally appended to a file; at most
+// FEEDBACK_PER_IP reports per address per 10 minutes.
+const FEEDBACK_KEEP = 500;
+const FEEDBACK_PER_IP = 20;
+const FEEDBACK_BYTES = 6000;
+const FEEDBACK_TEXT = 2000;
 
 const CONTENT_TYPES = {
   '.html': 'text/html; charset=utf-8',
@@ -103,7 +119,10 @@ export async function startServer({
   rules = {},
   resumeMs = RESUME_MS,
   compress = false,
+  bots = 0,
   heartbeatMs = HEARTBEAT_MS,
+  feedbackKey = '',
+  feedbackFile = '',
   staticDir = null,
   log = console.log,
 } = {}) {
@@ -114,6 +133,37 @@ export async function startServer({
   const clients = new Set(); // { ws, room, player }
 
   const root = staticDir && existsSync(join(staticDir, 'index.html')) ? resolve(staticDir) : null;
+  const feedback = []; // { at, kind, text, info }
+  const feedbackHits = new Map(); // address -> { since, count }
+
+  // A report from a player's game: { kind: 'feedback' | 'error', text, info }.
+  const takeFeedback = (address, body) => {
+    const now = Date.now();
+    const hit = feedbackHits.get(address);
+    if (!hit || now - hit.since > 600000) feedbackHits.set(address, { since: now, count: 1 });
+    else if (++hit.count > FEEDBACK_PER_IP) return 429;
+    if (feedbackHits.size > 10000) feedbackHits.clear(); // a flood of addresses: start over
+    let msg;
+    try {
+      msg = JSON.parse(body);
+    } catch {
+      return 400;
+    }
+    if (!msg || (msg.kind !== 'feedback' && msg.kind !== 'error') || typeof msg.text !== 'string' || !msg.text.trim()) return 400;
+    const info = msg.info && typeof msg.info === 'object' ? JSON.stringify(msg.info).slice(0, 1500) : '';
+    const entry = { at: new Date(now).toISOString(), kind: msg.kind, text: msg.text.trim().slice(0, FEEDBACK_TEXT), info };
+    feedback.push(entry);
+    if (feedback.length > FEEDBACK_KEEP) feedback.shift();
+    log(`[${entry.kind}] ${entry.text.replace(/\s+/g, ' ').slice(0, 300)} ${info}`);
+    if (feedbackFile) appendFile(feedbackFile, JSON.stringify(entry) + '\n').catch(() => {});
+    return 200;
+  };
+  const keyOk = (given) => {
+    if (!feedbackKey || typeof given !== 'string') return false;
+    const a = Buffer.from(given);
+    const b = Buffer.from(feedbackKey);
+    return a.length === b.length && timingSafeEqual(a, b);
+  };
 
   const http = createServer(async (req, res) => {
     const json = (body) => {
@@ -122,6 +172,38 @@ export async function startServer({
       res.end(JSON.stringify(body));
     };
     const path = req.url.split('?')[0];
+    // players' feedback and error reports in; the reports out, with the key
+    if (path === '/feedback') {
+      const cors = { 'access-control-allow-origin': '*', 'access-control-allow-methods': 'POST, OPTIONS', 'access-control-allow-headers': 'content-type' };
+      if (req.method === 'OPTIONS') {
+        res.writeHead(204, cors);
+        return res.end();
+      }
+      if (req.method === 'POST') {
+        let body = '';
+        let size = 0;
+        req.on('data', (chunk) => {
+          size += chunk.length;
+          if (size > FEEDBACK_BYTES) req.destroy();
+          else body += chunk;
+        });
+        req.on('end', () => {
+          const address = String(req.headers['x-forwarded-for'] || req.socket.remoteAddress || '').split(',')[0].trim();
+          const status = takeFeedback(address, body);
+          res.writeHead(status, { ...cors, 'content-type': 'application/json' });
+          res.end(JSON.stringify({ ok: status === 200 }));
+        });
+        return;
+      }
+      const key = new URL(req.url, 'http://x').searchParams.get('key');
+      if (!keyOk(key)) {
+        res.writeHead(404, { 'content-type': 'text/plain; charset=utf-8' });
+        return res.end('not found');
+      }
+      if (new URL(req.url, 'http://x').searchParams.get('format') === 'json') return json({ reports: feedback });
+      res.writeHead(200, { 'content-type': 'text/html; charset=utf-8', 'cache-control': 'no-store' });
+      return res.end(feedbackPage(feedback));
+    }
     // the room list for the menu: public rooms only, busiest first
     if (path === '/rooms') {
       const list = [...rooms.values()].filter((r) => !r.private).map((r) => r.summary());
@@ -146,7 +228,8 @@ export async function startServer({
   const remove = (room, player, why) => {
     clearTimeout(player.awayTimer);
     room.leave(player.id);
-    log(`[leave] ${player.name}#${player.id} <- ${room.name} (${room.size} players${why ? ', ' + why : ''})`);
+    room.balanceBots(); // a bot takes the seat (or the bots go with the last person)
+    log(`[leave] ${player.name}#${player.id} <- ${room.name} (${room.humans} players${why ? ', ' + why : ''})`);
     if (room.size === 0 && rooms.get(room.name) === room) rooms.delete(room.name);
   };
 
@@ -197,7 +280,7 @@ export async function startServer({
           held.queue.length = 0;
           client.room = room;
           client.player = held;
-          send(ws, { t: 'welcome', id: held.id, token: held.token, seed, map: room.map, room: roomName, tick: room.tick, resumed: true });
+          send(ws, { t: 'welcome', id: held.id, name: held.name, token: held.token, seed, map: room.map, room: roomName, tick: room.tick, resumed: true });
           log(`[back] ${held.name}#${held.id} -> ${roomName}`);
           return;
         }
@@ -211,18 +294,19 @@ export async function startServer({
           const map = requestedMap === 'plaza' ? 'plaza' : 'arena';
           const colliders = map === 'arena' ? ARENA.boxes : plazaColliders;
           const mapData = map === 'arena' ? ARENA : null;
-          room = new Room(roomName, colliders, { seed, map, mapData, mode, rules, private: msg.private === true });
+          room = new Room(roomName, colliders, { seed, map, mapData, mode, rules, private: msg.private === true, bots: msg.bots === false ? 0 : bots });
           rooms.set(roomName, room);
         }
-        const player = room.join(cleanLabel(msg.name, 'player', 16));
+        const player = room.join(playerName(msg.name)); // no slurs, no "BOT ..." impersonation
         if (!player) return reject(ws, 'room-full', `room "${roomName}" is full`);
+        room.balanceBots();
         clearTimeout(helloTimer);
         player.token = randomBytes(12).toString('hex');
         player.away = false;
         client.room = room;
         client.player = player;
-        send(ws, { t: 'welcome', id: player.id, token: player.token, seed, map: room.map, room: roomName, tick: room.tick });
-        log(`[join] ${player.name}#${player.id} -> ${roomName} [${room.mode}/${room.map}] (${room.size} players)`);
+        send(ws, { t: 'welcome', id: player.id, name: player.name, token: player.token, seed, map: room.map, room: roomName, tick: room.tick });
+        log(`[join] ${player.name}#${player.id} -> ${roomName} [${room.mode}/${room.map}] (${room.humans} players, ${room.size - room.humans} bots)`);
         return;
       }
 
@@ -307,6 +391,29 @@ export async function startServer({
   };
 }
 
+const esc = (s) => String(s).replace(/[&<>"']/g, (c) => `&#${c.charCodeAt(0)};`);
+
+// The reports, newest first, as a plain page.
+function feedbackPage(list) {
+  const rows = [...list]
+    .reverse()
+    .map(
+      (r) =>
+        `<tr class="${r.kind}"><td>${esc(r.at.replace('T', ' ').slice(0, 19))}</td><td>${r.kind}</td>` +
+        `<td><pre>${esc(r.text)}</pre></td><td><code>${esc(r.info)}</code></td></tr>`,
+    )
+    .join('');
+  return (
+    '<!doctype html><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><title>OVERWATCH feedback</title>' +
+    '<style>body{font:14px system-ui,sans-serif;margin:16px;background:#0f1520;color:#e2e8f0}table{border-collapse:collapse;width:100%}' +
+    'td{border-bottom:1px solid #263247;padding:6px 8px;vertical-align:top}pre{white-space:pre-wrap;margin:0;font:inherit}' +
+    'code{font-size:11px;color:#8aa0bd;word-break:break-all}.error td:nth-child(2){color:#f87171}.feedback td:nth-child(2){color:#7fe08a}</style>' +
+    `<h1>Feedback (${list.length})</h1><p>Newest first. Kept in memory since the server started` +
+    ' (set FEEDBACK_FILE to keep them across restarts); every report is also in the server log.</p>' +
+    `<table><tr><td>when (UTC)</td><td>kind</td><td>message</td><td>details</td></tr>${rows}</table>`
+  );
+}
+
 // started directly: `node server/index.js`
 if (import.meta.url === pathToFileURL(process.argv[1]).href) {
   const server = await startServer({
@@ -315,6 +422,9 @@ if (import.meta.url === pathToFileURL(process.argv[1]).href) {
     seed: Number(process.env.SEED) || 0x5eed1234,
     staticDir: process.env.STATIC_DIR || DEFAULT_STATIC_DIR,
     compress: process.env.COMPRESS === '1',
+    bots: process.env.BOTS === undefined ? 6 : Number(process.env.BOTS) || 0,
+    feedbackKey: process.env.FEEDBACK_KEY || '',
+    feedbackFile: process.env.FEEDBACK_FILE || '',
   });
   // hosting platforms stop a deploy with SIGTERM: close sockets and exit cleanly
   for (const signal of ['SIGTERM', 'SIGINT']) {
