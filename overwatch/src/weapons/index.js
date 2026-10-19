@@ -648,7 +648,7 @@ export class WeaponSystem {
     p.setAds(this.ads, def.adsFov);
     this.scoped = !!def.scope && this.ads > 0.85 && !p.dead;
     this._scopeEl.style.display = this.scoped ? 'block' : 'none';
-    this._root.visible = !this.scoped;
+    this._root.visible = !this.scoped && !p.dead; // no gun in hand while dead (or spectating)
 
     // fire (automatic: held; semi-automatic: each click); the dead and the
     // frozen (online round start) don't shoot
@@ -753,7 +753,7 @@ export class WeaponSystem {
     p.setAds(this.ads, 52);
     this.scoped = false;
     this._scopeEl.style.display = 'none';
-    this._root.visible = true;
+    this._root.visible = !p.dead;
     if (this._throwT >= 0) {
       this._throwT += dt;
       if (this._throwT >= THROW_ANIM) {

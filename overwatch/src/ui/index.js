@@ -181,7 +181,7 @@ export class UiSystem {
     this._chBot.style.top = '1px';
     this._chL.style.left = `-${off}px`;
     this._chR.style.left = '1px';
-    this._cross.style.opacity = String(w && w.scoped ? 0 : ads > 0.5 ? 0.25 : 1);
+    this._cross.style.opacity = String((w && w.scoped) || (p && p.dead) ? 0 : ads > 0.5 ? 0.25 : 1);
   }
 
   dispose() {

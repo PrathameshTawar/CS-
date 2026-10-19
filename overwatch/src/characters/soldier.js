@@ -121,23 +121,56 @@ export function createSoldier(mats) {
   root.updateMatrixWorld(true);
   mesh.bind(skeleton);
 
-  // rifle as a child of the chest bone (non-skinned, follows the torso)
+  // the weapon, a child of the chest bone (non-skinned, follows the torso)
   const rifle = new THREE.Group();
-  const body = new THREE.Mesh(new THREE.BoxGeometry(0.045, 0.05, 0.55), mats[2]);
-  body.position.set(0, 0, 0.1);
-  rifle.add(body);
-  const mag = new THREE.Mesh(new THREE.BoxGeometry(0.04, 0.09, 0.06), mats[2]);
-  mag.position.set(0, -0.055, 0.1);
-  rifle.add(mag);
-  const grip = new THREE.Mesh(new THREE.BoxGeometry(0.035, 0.06, 0.04), mats[2]);
-  grip.position.set(0, -0.035, 0.26);
-  grip.rotation.x = 0.5;
-  rifle.add(grip);
   rifle.position.set(0.18, -0.02, 0.3);
   rifle.rotation.y = -0.25;
   bones.chest.add(rifle);
 
-  return { root, mesh, bones, skeleton, rifle };
+  const soldier = { root, mesh, bones, skeleton, rifle, weapon: null, gunMat: mats[2] };
+  setSoldierWeapon(soldier, 'rifle');
+  return soldier;
+}
+
+// The weapon each soldier visibly holds (shared/weapons.js ids): boxes for
+// body, magazine and grip (plus a scope on the sniper), along +Z.
+const GUN_SHAPES = {
+  pistol: { body: [0.035, 0.045, 0.19, 0.12], mag: [0.03, 0.05, 0.04, 0.09], grip: 0.17 },
+  heavy: { body: [0.04, 0.055, 0.24, 0.13], mag: [0.034, 0.055, 0.045, 0.1], grip: 0.19 },
+  smg: { body: [0.045, 0.055, 0.4, 0.12], mag: [0.032, 0.13, 0.04, 0.06], grip: 0.22 },
+  rifle: { body: [0.045, 0.05, 0.55, 0.1], mag: [0.04, 0.09, 0.06, 0.1], grip: 0.26 },
+  sniper: { body: [0.045, 0.05, 0.85, 0.02], mag: [0.04, 0.05, 0.07, 0.12], grip: 0.28, scope: true },
+};
+
+// Swaps the held weapon's mesh (does nothing if it's already that one).
+export function setSoldierWeapon(soldier, id) {
+  const shape = GUN_SHAPES[id] || GUN_SHAPES.rifle;
+  if (soldier.weapon === id) return;
+  soldier.weapon = id;
+  const g = soldier.rifle;
+  for (const child of [...g.children]) {
+    g.remove(child);
+    child.geometry.dispose();
+  }
+  const mat = soldier.gunMat;
+  const [bw, bh, bl, bz] = shape.body;
+  const body = new THREE.Mesh(new THREE.BoxGeometry(bw, bh, bl), mat);
+  body.position.set(0, 0, bz);
+  g.add(body);
+  const [mw, mh, md, mz] = shape.mag;
+  const mag = new THREE.Mesh(new THREE.BoxGeometry(mw, mh, md), mat);
+  mag.position.set(0, -bh / 2 - mh / 2 + 0.015, mz);
+  g.add(mag);
+  const grip = new THREE.Mesh(new THREE.BoxGeometry(0.035, 0.06, 0.04), mat);
+  grip.position.set(0, -0.035, shape.grip);
+  grip.rotation.x = 0.5;
+  g.add(grip);
+  if (shape.scope) {
+    const scope = new THREE.Mesh(new THREE.CylinderGeometry(0.022, 0.022, 0.28, 10), mat);
+    scope.rotation.x = Math.PI / 2;
+    scope.position.set(0, bh / 2 + 0.03, 0.05);
+    g.add(scope);
+  }
 }
 
 // Frees the soldier's own geometry (the skinned body geometry is shared).
