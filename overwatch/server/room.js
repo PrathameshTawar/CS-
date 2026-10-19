@@ -32,6 +32,13 @@
 //   the match; MATCH_END shows the result, then a new match starts.
 // - Late joiners sit out (dead) until the next round starts.
 //
+// Grenades (shared/grenades.js): bought like gear and thrown through the
+// input stream like shots. The server runs each flight at the tick rate and
+// detonates it; everyone else runs the same deterministic flight from the
+// EV_NADE throw event, and EV_NADE_POP says where it went off. HE hurts
+// enemies (and its thrower) with line of sight; flash and smoke are drawn by
+// the clients.
+//
 // Bomb Defusal (mode 'bomb', maps with bomb sites; shared/bomb.js has the
 // numbers): the same rounds, but the attacking team (game.attackers) spawns
 // at the map's +Z end and must plant the bomb on a site; the defenders win
@@ -50,6 +57,16 @@
 
 import { CollisionWorld } from '../shared/collision.js';
 import { createRng } from '../shared/rng.js';
+import {
+  GRENADES,
+  GRENADE_IDS,
+  MIN_THROW_INTERVAL,
+  createFlight,
+  heDamage,
+  shouldDetonate,
+  stepFlight,
+  throwVelocity,
+} from '../shared/grenades.js';
 import {
   BOMB_CARRIED,
   BOMB_DEFUSED,
@@ -116,6 +133,8 @@ import {
   EV_BOMB,
   EV_HALFTIME,
   EV_HIT,
+  EV_NADE,
+  EV_NADE_POP,
   EV_KILL,
   EV_MATCH_END,
   EV_ROUND_END,
@@ -126,6 +145,7 @@ import {
   MAX_REWIND_TICKS,
   MAX_SHOTS_PER_MESSAGE,
   KILL_BY_BOMB,
+  KILL_BY_HE,
   MODE_BOMB,
   MODE_DM,
   MODE_TEAMS,
@@ -145,6 +165,7 @@ import {
   readInput,
   readShot,
   readSwitch,
+  readThrow,
 } from '../shared/protocol.js';
 
 const H = 1 / TICK_RATE;
@@ -165,6 +186,7 @@ for (const w of Object.values(WEAPONS)) {
     draw: Math.max(0, Math.round(w.drawTime * TICK_RATE) - 6),
   };
 }
+const THROW_STEPS = Math.round(MIN_THROW_INTERVAL * TICK_RATE) - 6;
 const RESPAWN_TICKS = RESPAWN_TIME * TICK_RATE;
 // how far the reported muzzle may be from the server's eye position: the
 // weapon offset (~0.26 m) plus lean, bob and recoil, with margin
@@ -233,6 +255,8 @@ export class Room {
     this._out = { hasWish: false, landed: false, impact: 0 };
     this._end = { x: 0, y: 0, z: 0 };
     this._boxes = []; // rewound hitboxes for the shot being resolved (reused)
+    this.nades = []; // grenades in flight: { id, owner, type, flight }
+    this._nextNade = 1;
   }
 
   get size() {
@@ -273,6 +297,8 @@ export class Room {
       kit: false,
       useKind: USE_NONE, // planting or defusing
       useSteps: 0,
+      nades: { he: 0, flash: 0, smoke: 0 },
+      lastThrow: -Infinity,
       rejected: 0, // shots refused (rate, ammo, origin): a cheat signal
       eventsSeen: this._eventN,
       history,
@@ -339,7 +365,7 @@ export class Room {
   // Queues a batch of wire inputs plus optional shots/reloads. Returns false
   // if anything is malformed (the caller should drop the client). Old or
   // duplicate seqs are ignored.
-  receiveInputs(id, batch, shots = undefined, reloads = undefined, switches = undefined) {
+  receiveInputs(id, batch, shots = undefined, reloads = undefined, switches = undefined, throws = undefined) {
     const p = this.players.get(id);
     if (!p) return false;
     if (!Array.isArray(batch) || batch.length > MAX_INPUTS_PER_MESSAGE) return false;
@@ -377,6 +403,14 @@ export class Room {
         const sw = readSwitch(raw);
         if (!sw) return false;
         p.actions.push({ seq: sw.seq, slot: sw.slot });
+      }
+    }
+    if (throws !== undefined) {
+      if (!Array.isArray(throws) || throws.length > MAX_SHOTS_PER_MESSAGE) return false;
+      for (const raw of throws) {
+        const t = readThrow(raw);
+        if (!t) return false;
+        p.actions.push({ seq: t.seq, nade: t });
       }
     }
     if (p.actions.length > MAX_PENDING_ACTIONS) p.actions.splice(0, p.actions.length - MAX_PENDING_ACTIONS);
@@ -418,6 +452,7 @@ export class Room {
       }
       if (p.dead && this.respawning && this.tick >= p.respawnTick) this._respawn(p);
     }
+    this._updateNades();
     if (this.mode === MODE_BOMB) this._updateBomb();
     if (this.mode !== MODE_DM) this._updateMatch();
     for (const p of this.players.values()) this._record(p);
@@ -504,6 +539,7 @@ export class Room {
     p.armor = 0;
     p.helmet = false;
     p.kit = false;
+    p.nades = { he: 0, flash: 0, smoke: 0 };
     p.dead = true; // the next round starts p on the free pistol
   }
 
@@ -600,6 +636,7 @@ export class Room {
     const p = this.players.get(id);
     if (!p) return 'no-player';
     if (typeof weaponId === 'string' && Object.hasOwn(EQUIPMENT, weaponId)) return this._buyGear(p, EQUIPMENT[weaponId]);
+    if (typeof weaponId === 'string' && Object.hasOwn(GRENADES, weaponId)) return this._buyGrenade(p, GRENADES[weaponId]);
     if (typeof weaponId !== 'string' || !Object.hasOwn(WEAPONS, weaponId)) return 'bad-weapon';
     const w = WEAPONS[weaponId];
     if (w.price <= 0) return 'not-for-sale';
@@ -641,6 +678,16 @@ export class Room {
       p.armor = MAX_ARMOR;
       if (item.id === 'vesthelm') p.helmet = true;
     }
+    return true;
+  }
+
+  _buyGrenade(p, g) {
+    if (!this.canBuy(p)) return 'cannot-buy';
+    if (p.nades[g.id] >= g.max) return 'owned';
+    const cost = this.freeBuy ? 0 : g.price;
+    if (p.money < cost) return 'no-money';
+    p.money -= cost;
+    p.nades[g.id]++;
     return true;
   }
 
@@ -686,6 +733,7 @@ export class Room {
         continue;
       }
       if (a.shot) this._fire(p, a.shot);
+      else if (a.nade) this._throw(p, a.nade);
       else if (a.reload) this._reload(p);
       else this._switch(p, a.slot);
     }
@@ -760,15 +808,80 @@ export class Room {
     target.armor = 0;
     target.helmet = false;
     target.kit = false;
+    target.nades = { he: 0, flash: 0, smoke: 0 };
     target.useKind = USE_NONE;
     target.useSteps = 0;
     this._dropIfCarrier(target);
-    if (killer) {
+    if (killer && killer !== target) {
       killer.kills++;
-      if (weaponId) this._pay(killer, WEAPONS[weaponId].killReward);
+      const reward = weaponId === 'he' ? 300 : weaponId && WEAPONS[weaponId] ? WEAPONS[weaponId].killReward : 0;
+      this._pay(killer, reward);
     }
-    const how = weaponId === 'bomb' ? KILL_BY_BOMB : weaponId ? weaponIndex(weaponId) : -1;
+    const how = weaponId === 'bomb' ? KILL_BY_BOMB : weaponId === 'he' ? KILL_BY_HE : weaponId ? weaponIndex(weaponId) : -1;
     this._emit([EV_KILL, killer ? killer.id : 0, target.id, headshot ? 1 : 0, how]);
+  }
+
+  // ---- grenades ----
+
+  _throw(p, t) {
+    if (p.dead) return;
+    const type = GRENADE_IDS[t.type];
+    const m = p.move;
+    const eyeDist = Math.hypot(t.origin.x - m.pos.x, t.origin.y - (m.pos.y + m.eye), t.origin.z - m.pos.z);
+    if (this.frozen || p.nades[type] <= 0 || p.steps - p.lastThrow < THROW_STEPS || eyeDist > MAX_MUZZLE_OFFSET) {
+      p.rejected++;
+      return;
+    }
+    p.nades[type]--;
+    p.lastThrow = p.steps;
+    // the server picks the speed: a modified client can't throw harder
+    const vel = throwVelocity(t.dir, t.lob, m.vel);
+    const id = this._nextNade++;
+    this.nades.push({ id, owner: p.id, type, flight: createFlight(t.origin, vel) });
+    const o = t.origin;
+    this._emit([EV_NADE, id, p.id, t.type, o.x, o.y, o.z, vel.x, vel.y, vel.z, this.tick, t.seq]);
+  }
+
+  // Each tick: fly every grenade one step; set off the ones that are due.
+  _updateNades() {
+    if (!this.nades.length) return;
+    let keep = 0;
+    for (const n of this.nades) {
+      stepFlight(n.flight, this.world);
+      if (shouldDetonate(n.type, n.flight)) this._detonate(n);
+      else this.nades[keep++] = n;
+    }
+    this.nades.length = keep;
+  }
+
+  _detonate(n) {
+    const f = n.flight;
+    this._emit([EV_NADE_POP, n.id, GRENADE_IDS.indexOf(n.type), r3(f.x), r3(f.y), r3(f.z), n.owner]);
+    if (n.type !== 'he') return; // flash and smoke only affect what players see
+    const g = GRENADES.he;
+    const owner = this.players.get(n.owner) || null;
+    const at = { x: f.x, y: f.y + 0.3, z: f.z };
+    for (const p of this.players.values()) {
+      if (p.dead) continue;
+      // no friendly fire, but you can hurt yourself
+      if (owner && p !== owner && p.team >= 0 && p.team === owner.team) continue;
+      const m = p.move;
+      const dx = m.pos.x - at.x;
+      const dy = m.pos.y + 1 - at.y;
+      const dz = m.pos.z - at.z;
+      const d = Math.sqrt(dx * dx + dy * dy + dz * dz);
+      const raw = heDamage(d);
+      if (raw <= 0) continue;
+      const dir = { x: dx / d, y: dy / d, z: dz / d };
+      const wall = this.world.raycastStatic(at, dir, d);
+      if (wall && wall.hit) continue; // behind cover
+      const hit = applyArmor(raw, g.armorPen, p.armor, p.helmet, false);
+      p.armor -= hit.armor;
+      if (p.armor <= 0) p.helmet = false;
+      p.hp = Math.max(0, p.hp - hit.health);
+      this._emit([EV_HIT, n.owner, p.id, hit.health, 0, r3(m.pos.x), r3(m.pos.y + 1), r3(m.pos.z)]);
+      if (p.hp === 0) this._kill(p, owner, false, 'he');
+    }
   }
 
   // ---- the bomb ----
@@ -1056,6 +1169,7 @@ export class Room {
         me.hp, me.dead ? 1 : 0, me.ammo, me.reserve, me.kills, me.deaths, me.spawns, me.team,
         me.money, me.slot, packGun(me.loadout[PRIMARY]), packGun(me.loadout[SECONDARY]), this._buyFlags(me),
         me.armor, me.helmet ? 1 : 0, me.kit ? 1 : 0, me.useKind, this._useProgress(me),
+        [me.nades.he, me.nades.flash, me.nades.smoke],
       ],
       players,
       game: this._gameState(me),

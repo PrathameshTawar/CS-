@@ -26,6 +26,7 @@ const KEYMAP = {
   use: ['KeyG'],
   slot1: ['Digit1'], // primary
   slot2: ['Digit2'], // pistol
+  grenade: ['Digit4'], // take out a grenade (again: the next type)
   buy: ['KeyB'],
 };
 

@@ -13,7 +13,10 @@
 //     { t: 'input', i: [[seq, f, r, flags, yaw, pitch], ...],
 //       f?: [[seq, ox, oy, oz, dx, dy, dz, viewTick], ...],   shots
 //       r?: [seq, ...],                                       reload starts
-//       w?: [[seq, slot], ...] }                              weapon switches
+//       w?: [[seq, slot], ...],                               weapon switches
+//       n?: [[seq, type, ox, oy, oz, dx, dy, dz, lob], ...] }  grenade throws
+//                                                (type: index in GRENADE_IDS,
+//                                                d: unit aim, lob: 0 | 1)
 //     { t: 'buy', w }                           buy weapon or gear id w (shared/weapons.js)
 //     { t: 'sell', w }                          sell back weapon id w
 //     { t: 'ping', c }                          c: client clock (ms)
@@ -35,8 +38,8 @@
 // spawns, team, money, slot, primary, secondary, buy, armor, helmet, kit,
 // useKind, useProgress] where ammo/reserve are the held weapon's,
 // primary/secondary are [weaponId, ammo, reserve] (primary null when empty),
-// buy is BUY_* flags, useKind is USE_* (planting or defusing right now) and
-// useProgress 0..1. `players` holds every
+// buy is BUY_* flags, useKind is USE_* (planting or defusing right now),
+// useProgress 0..1 and nades [he, flash, smoke] grenades carried. `players` holds every
 // OTHER player as [id, x, y, z, yaw, pitch, flags, name, kills, deaths,
 // team, heldWeaponId]. `game` is [phase, phaseEndsTick, round, scoreAlpha,
 // scoreBravo, lastRoundWinner, roundsToWin, deathmatch, buyUntilTick,
@@ -45,7 +48,7 @@
 // are told where a carried bomb is, and by whom). `ev` lists events since
 // the recipient's last snapshot (EV_* below).
 
-export const PROTOCOL_VERSION = 5;
+export const PROTOCOL_VERSION = 6;
 export const TICK_RATE = 120; // server steps per second; equals the client's FIXED_STEP
 export const SNAPSHOT_EVERY = 6; // ticks between snapshots (20 Hz)
 export const INPUT_SEND_EVERY = 4; // client fixed steps per input batch (30 Hz)
@@ -76,8 +79,14 @@ export const EV_ROUND_END = 5; // [EV_ROUND_END, round, winnerTeam (-1 draw), re
 export const EV_MATCH_END = 6; // [EV_MATCH_END, winnerTeam]
 export const EV_BOMB = 7; // [EV_BOMB, BOMBEV_*, playerId (0: none), site]
 export const EV_HALFTIME = 8; // [EV_HALFTIME, attackingTeam]: teams switch sides
+// a grenade left someone's hand at server tick `tick`; everyone simulates
+// the same flight (shared/grenades.js) from origin o with velocity v. Its
+// first step is taken in `tick` itself: at tick T it has made T - tick + 1.
+export const EV_NADE = 9; // [EV_NADE, nadeId, ownerId, type, ox, oy, oz, vx, vy, vz, tick, throwSeq]
+export const EV_NADE_POP = 10; // [EV_NADE_POP, nadeId, type, x, y, z, ownerId]: it went off here
 
 export const KILL_BY_BOMB = -2;
+export const KILL_BY_HE = -3;
 export const BOMBEV_PLANTED = 1;
 export const BOMBEV_DEFUSED = 2;
 export const BOMBEV_EXPLODED = 3;
@@ -182,6 +191,21 @@ export function readSwitch(raw) {
   const [seq, slot] = raw;
   if (!Number.isInteger(seq) || seq < 0 || (slot !== 0 && slot !== 1)) return null;
   return { seq, slot };
+}
+
+// Validates one wire grenade throw; returns { seq, type, origin, dir, lob } or null.
+export function readThrow(raw) {
+  if (!Array.isArray(raw) || raw.length !== 9) return null;
+  const [seq, type, ox, oy, oz, dx, dy, dz, lob] = raw;
+  if (!Number.isInteger(seq) || seq < 0 || !Number.isInteger(type) || type < 0 || type > 2) return null;
+  if (![ox, oy, oz, dx, dy, dz].every(isCoord) || (lob !== 0 && lob !== 1)) return null;
+  const len = Math.hypot(dx, dy, dz);
+  if (len < 0.9 || len > 1.1) return null;
+  return { seq, type, origin: { x: ox, y: oy, z: oz }, dir: { x: dx / len, y: dy / len, z: dz / len }, lob: lob === 1 };
+}
+
+export function writeThrow(seq, type, origin, dir, lob) {
+  return [seq, type, origin.x, origin.y, origin.z, dir.x, dir.y, dir.z, lob ? 1 : 0];
 }
 
 export function writeShot(seq, origin, dir, viewTick) {

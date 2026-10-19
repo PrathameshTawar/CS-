@@ -10,6 +10,10 @@
 // weapon:fire, weapon:switch, weapon:reload, weapon:shell, bullet:tracer
 // and bullet:impact; reads player.applyRecoil/addShake/addFovPunch/setAds.
 //
+// Grenades: 4 takes one out (again: the next type); click throws, right
+// click lobs; 1 / 2 put it away. The grenades system owns the inventory and
+// the throw itself; this system only holds and animates it.
+//
 // Online, the server owns what you carry (net calls setLoadout on a spawn and
 // syncOwned when a purchase lands); the held slot and ammo are predicted here.
 //
@@ -19,6 +23,7 @@
 import * as THREE from 'three';
 import { shotEndpoint, traceShot } from '../../shared/combat.js';
 import { DEFAULT_PRIMARY, DEFAULT_SECONDARY, PRIMARY, SECONDARY, WEAPONS, defaultSlot, makeGun } from '../../shared/weapons.js';
+import { GRENADES } from '../../shared/grenades.js';
 
 const INSPECT_TIME = 1.7;
 
@@ -30,10 +35,15 @@ const POSES = {
   smg: { rest: v3(0.3, -0.27, -0.48), ads: v3(0, -0.158, -0.34) },
   rifle: { rest: v3(0.32, -0.28, -0.52), ads: v3(0, -0.175, -0.36) },
   sniper: { rest: v3(0.3, -0.27, -0.55), ads: v3(0, -0.2, -0.42) },
+  he: { rest: v3(0.22, -0.22, -0.4), ads: v3(0.22, -0.22, -0.4) },
+  flash: { rest: v3(0.22, -0.22, -0.4), ads: v3(0.22, -0.22, -0.4) },
+  smoke: { rest: v3(0.22, -0.22, -0.4), ads: v3(0.22, -0.22, -0.4) },
 };
 const REST_ROT = new THREE.Euler(0.02, -0.03, 0.01);
 const ADS_ROT = new THREE.Euler(0, 0, 0);
-const BLOOM_SCALE = 0.05; // shared/weapons.js spread units -> radians
+const BLOOM_SCALE = 0.05;
+const GRENADE_DRAW = 0.35; // s to take a grenade out
+const THROW_ANIM = 0.35; // s of throwing motion // shared/weapons.js spread units -> radians
 
 export class WeaponSystem {
   static id = 'weapons';
@@ -52,6 +62,9 @@ export class WeaponSystem {
     this.loadout = [makeGun(DEFAULT_PRIMARY), makeGun(DEFAULT_SECONDARY)];
     this.slot = PRIMARY;
     this._drawT = Infinity; // time since the held weapon was drawn
+    this.grenadeOut = false; // holding a grenade instead of the gun in `slot`
+    this.grenadeType = null;
+    this._throwT = -1; // time since the last throw (animation), -1: none
     this.reloading = false;
     this.ads = 0; // smoothed 0..1
     this._adsTarget = 0;
@@ -123,6 +136,7 @@ export class WeaponSystem {
     this._buildPistol(this._model('heavy', -0.19), true);
     this._buildSmg(this._model('smg', -0.3));
     this._buildSniper(this._model('sniper', -0.84));
+    for (const id of Object.keys(GRENADES)) this._buildGrenade(this._model(id, 0), id);
 
     // lights for the view scene (fixed set — never culled, no permutation churn)
     const key = new THREE.DirectionalLight(0xffffff, 2.4);
@@ -278,6 +292,30 @@ export class WeaponSystem {
     this._setMag(model, mag);
   }
 
+  // A grenade in the hand: HE round and olive, flash a pale can, smoke a
+  // darker can with a band.
+  _buildGrenade(model, id) {
+    const body = id === 'he' ? this._matHandguard : id === 'flash' ? this._matReceiver : this._matMag;
+    if (id === 'he') {
+      const ball = new THREE.Mesh(new THREE.SphereGeometry(0.034, 14, 10), body);
+      ball.scale.set(1, 1.15, 1);
+      this._g.add(ball);
+    } else {
+      this._cyl(0.026, 0.1, body, 0, 0, 0, false);
+      this._cyl(0.027, 0.012, id === 'flash' ? this._matBarrel : this._matGlow, 0, 0.02, 0, false);
+    }
+    // fuse head and spoon
+    this._cyl(0.012, 0.025, this._matDark, 0, id === 'he' ? 0.045 : 0.062, 0, false);
+    this._box(0.008, 0.06, 0.014, this._matDark, 0.022, id === 'he' ? 0.02 : 0.035, 0);
+    // pin ring
+    const ring = new THREE.Mesh(new THREE.TorusGeometry(0.012, 0.0025, 6, 14), this._matBrass);
+    ring.position.set(-0.016, id === 'he' ? 0.058 : 0.075, 0);
+    ring.rotation.y = Math.PI / 2;
+    this._g.add(ring);
+    // a small "magazine" stand-in so the reload code has something to hold
+    this._setMag(model, ring);
+  }
+
   _box(w, h, d, mat, x, y, z) {
     const mesh = new THREE.Mesh(new THREE.BoxGeometry(w, h, d), mat);
     mesh.position.set(x, y, z);
@@ -395,14 +433,37 @@ export class WeaponSystem {
   }
 
   get drawing() {
-    return this._drawT < this.def.drawTime;
+    return this._drawT < (this.grenadeOut ? GRENADE_DRAW : this.def.drawTime);
+  }
+
+  // Takes a grenade out (or the next type, if one is already out).
+  _grenade(ctx) {
+    const g = ctx.peek('grenades');
+    const next = g && g.nextType(this.grenadeOut ? this.grenadeType : null);
+    if (!next || (this.grenadeOut && next === this.grenadeType)) return;
+    this.grenadeOut = true;
+    this.grenadeType = next;
+    this.reloading = false;
+    this._inspectT = -1;
+    this._drawT = 0;
+    this._throwT = -1;
+    this._showModel();
+  }
+
+  // Back to the gun in `slot` (drawn again).
+  _putAwayGrenade(slot) {
+    this.grenadeOut = false;
+    this._throwT = -1;
+    if (!this.switchTo(slot, true)) this.switchTo(this.slot, true);
   }
 
   // Holds `slot` (if there's a weapon in it): cancels a reload or inspect,
   // and the weapon can fire once it's drawn. `force` re-draws the held slot
   // (its weapon was replaced).
   switchTo(slot, force = false) {
-    if (!this.loadout[slot] || (slot === this.slot && !force)) return false;
+    if (!this.loadout[slot] || (slot === this.slot && !force && !this.grenadeOut)) return false;
+    this.grenadeOut = false; // a gun comes up: any grenade goes away
+    this._throwT = -1;
     this.slot = slot;
     this.reloading = false;
     this._inspectT = -1;
@@ -417,6 +478,8 @@ export class WeaponSystem {
   // Replaces the whole loadout (a spawn): full state, no draw animation.
   // `loadout` is [[id, ammo, reserve] | null, [id, ammo, reserve]].
   setLoadout(loadout, slot) {
+    this.grenadeOut = false;
+    this._throwT = -1;
     this.loadout = loadout.map((g) => g && { id: g[0], ammo: g[1], reserve: g[2] });
     this.slot = this.loadout[slot] ? slot : defaultSlot(this.loadout);
     this.reloading = false;
@@ -450,8 +513,9 @@ export class WeaponSystem {
   }
 
   _showModel() {
-    for (const [id, model] of Object.entries(this._models)) model.group.visible = id === this.gun.id;
-    const model = this._models[this.gun.id];
+    const shown = this.grenadeOut ? this.grenadeType : this.gun.id;
+    for (const [id, model] of Object.entries(this._models)) model.group.visible = id === shown;
+    const model = this._models[shown];
     this._flash.position.z = model.muzzleZ;
     this._flashLight.position.z = model.muzzleZ;
   }
@@ -560,11 +624,21 @@ export class WeaponSystem {
     const p = this.player;
     const buying = !!(ctx.peek('buy') && ctx.peek('buy').open);
 
-    // switch: 1 / 2, or the wheel toggles (not while the buy menu takes the keys)
+    // switch: 1 / 2, or the wheel toggles; 4: a grenade (not while the buy
+    // menu takes the keys)
     if (!buying && !p.dead) {
-      if (inp.justPressed('slot1')) this.switchTo(PRIMARY);
+      if (inp.justPressed('grenade')) this._grenade(ctx);
+      else if (this.grenadeOut && (inp.justPressed('slot1') || inp.justPressed('slot2') || inp.wheel() !== 0)) {
+        this._putAwayGrenade(inp.justPressed('slot2') ? SECONDARY : inp.justPressed('slot1') ? PRIMARY : this.slot);
+      } else if (inp.justPressed('slot1')) this.switchTo(PRIMARY);
       else if (inp.justPressed('slot2')) this.switchTo(SECONDARY);
       else if (inp.wheel() !== 0) this.switchTo(this.slot === PRIMARY ? SECONDARY : PRIMARY);
+    }
+    if (this.grenadeOut) {
+      this._updateGrenade(dt, ctx, buying);
+      this._animateViewmodel(dt, ctx);
+      this._updateHud();
+      return;
     }
     const def = this.def;
 
@@ -669,12 +743,42 @@ export class WeaponSystem {
     this._updateHud();
   }
 
+  // Holding a grenade: click throws, right click lobs; when that type runs
+  // out the next one comes up, or the gun when there are none left.
+  _updateGrenade(dt, ctx, buying) {
+    const inp = ctx.input;
+    const p = this.player;
+    const g = ctx.peek('grenades');
+    this.ads += (0 - this.ads) * Math.min(1, dt * 12);
+    p.setAds(this.ads, 52);
+    this.scoped = false;
+    this._scopeEl.style.display = 'none';
+    this._root.visible = true;
+    if (this._throwT >= 0) {
+      this._throwT += dt;
+      if (this._throwT >= THROW_ANIM) {
+        this._throwT = -1;
+        const next = g && (g.count(this.grenadeType) > 0 ? this.grenadeType : g.nextType(this.grenadeType));
+        if (next) {
+          this.grenadeType = next;
+          this._drawT = 0;
+          this._showModel();
+        } else this._putAwayGrenade(this.slot);
+      }
+      return;
+    }
+    if (!g || buying || p.dead || p.frozen || this.drawing) return;
+    const lob = inp.adsPressed();
+    if ((inp.firePressed() || lob) && g.throw(this.grenadeType, lob)) this._throwT = 0;
+  }
+
   _animateViewmodel(dt, ctx) {
     const p = this.player;
     const ads = this.ads;
     const def = this.def;
-    const pose = POSES[def.id];
-    const model = this._models[def.id];
+    const shown = this.grenadeOut ? this.grenadeType : def.id;
+    const pose = POSES[shown];
+    const model = this._models[shown];
 
     // sway: follow mouse velocity with smoothing, damped back to center
     this._sway.tx = THREE.MathUtils.clamp(this._sway.tx + p.lastAim.dx * 0.0009, -0.04, 0.04);
@@ -737,9 +841,16 @@ export class WeaponSystem {
       m.rotation.x = model.magRot;
     }
 
+    // a throw: the hand swings forward and up, then drops out of view
+    if (this.grenadeOut && this._throwT >= 0) {
+      const t = this._throwT / THROW_ANIM;
+      dip += Math.sin(t * Math.PI) * 0.06 - t * 0.25;
+      rotX -= Math.sin(t * Math.PI) * 0.9;
+    }
+
     // draw: rises from below the screen
     if (this.drawing) {
-      const t = this._drawT / def.drawTime;
+      const t = this._drawT / (this.grenadeOut ? GRENADE_DRAW : def.drawTime);
       const k2 = 1 - t * t * (3 - 2 * t);
       dip -= k2 * 0.22;
       rotX -= k2 * 0.7;
@@ -772,25 +883,41 @@ export class WeaponSystem {
   _updateHud() {
     if (!this._hud) return;
     const def = this.def;
-    this._hudAmmo.textContent = String(this.ammo);
-    this._hudReserve.textContent = String(this.reserve);
-    const low = this.ammo <= Math.ceil(def.mag * 0.27);
-    this._hudAmmo.style.color = low ? '#ffb347' : '#e8ecf2';
-    this._hudAmmo.style.opacity = this.ammo === 0 ? '0.35' : '1';
-    this._hudReload.style.opacity = this.reloading ? '1' : '0';
-    this._hudReload.textContent = this.reloading ? 'RELOADING' : (this.ammo === 0 ? 'PRESS R' : '');
+    const g = this.ctx.peek('grenades');
+    const nades = g ? `${g.count('he')}${g.count('flash')}${g.count('smoke')}` : '';
+    if (this.grenadeOut) {
+      this._hudAmmo.textContent = String(g ? g.count(this.grenadeType) : 0);
+      this._hudReserve.textContent = 'CLICK THROW · RIGHT CLICK LOB';
+      this._hudAmmo.style.color = '#e8ecf2';
+      this._hudAmmo.style.opacity = '1';
+      this._hudReload.style.opacity = '0';
+    } else {
+      this._hudAmmo.textContent = String(this.ammo);
+      this._hudReserve.textContent = String(this.reserve);
+    }
+    if (!this.grenadeOut) {
+      const low = this.ammo <= Math.ceil(def.mag * 0.27);
+      this._hudAmmo.style.color = low ? '#ffb347' : '#e8ecf2';
+      this._hudAmmo.style.opacity = this.ammo === 0 ? '0.35' : '1';
+      this._hudReload.style.opacity = this.reloading ? '1' : '0';
+      this._hudReload.textContent = this.reloading ? 'RELOADING' : (this.ammo === 0 ? 'PRESS R' : '');
+    }
     // weapon name and the two slots (held one bright); rebuilt only on change
-    const key = `${this.slot}|${this.loadout[PRIMARY] ? this.loadout[PRIMARY].id : ''}|${this.loadout[SECONDARY].id}`;
+    const key = `${this.slot}|${this.loadout[PRIMARY] ? this.loadout[PRIMARY].id : ''}|${this.loadout[SECONDARY].id}|${this.grenadeOut ? this.grenadeType : ''}|${nades}`;
     if (key !== this._hudKey) {
       this._hudKey = key;
-      this._hudName.textContent = def.name.toUpperCase();
+      this._hudName.textContent = (this.grenadeOut ? GRENADES[this.grenadeType].name : def.name).toUpperCase();
       const slotText = (slot, n) => {
         const gun = this.loadout[slot];
         if (!gun) return '';
-        const on = slot === this.slot;
+        const on = slot === this.slot && !this.grenadeOut;
         return `<span style="margin-left:10px;color:${on ? '#ffd27a' : '#6f7a88'}">${n} ${WEAPONS[gun.id].name.toUpperCase()}</span>`;
       };
-      this._hudSlots.innerHTML = slotText(PRIMARY, 1) + slotText(SECONDARY, 2);
+      const total = g ? g.total() : 0;
+      const nadeText = total
+        ? `<span style="margin-left:10px;color:${this.grenadeOut ? '#ffd27a' : '#6f7a88'}">4 GRENADES ×${total}</span>`
+        : '';
+      this._hudSlots.innerHTML = slotText(PRIMARY, 1) + slotText(SECONDARY, 2) + nadeText;
     }
   }
 
